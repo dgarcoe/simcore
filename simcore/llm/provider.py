@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -64,7 +65,7 @@ class LLMProvider:
         model: str = "gpt-4o-mini",
         reflection_model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: int = 500,
+        max_tokens: int = 4096,
         cache_enabled: bool = True,
         frequency_penalty: float = 0.0,
         presence_penalty: float = 0.0,
@@ -80,6 +81,106 @@ class LLMProvider:
         self._cache_hits = 0
 
     async def decide(self, system_prompt: str, user_prompt: str) -> Action:
+        """Ask the LLM to decide an agent's next action."""
+
+        cache_key = f"{system_prompt}|||{user_prompt}" if self.cache else None
+
+        if self.cache and cache_key:
+            cached = self.cache.get(cache_key)
+            if cached:
+                self._cache_hits += 1
+                return self._parse_action(cached)
+
+        max_retries = 5
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+
+            self._call_count += 1
+
+            try:
+                response = await litellm.acompletion(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    frequency_penalty=self.frequency_penalty,
+                    presence_penalty=self.presence_penalty,
+                )
+
+                #logger.warning(
+                #    "Attempt %s/%s - FULL RESPONSE=%s",
+                #    attempt,
+                #    max_retries,
+                #    response,
+                #)
+
+                content = response.choices[0].message.content
+
+                if content is None:
+                    content = ""
+                    
+                content = content.strip()
+
+                if not content:
+                    last_error = "Empty content"
+                    logger.warning(
+                        "Attempt %s/%s returned empty content",
+                        attempt,
+                        max_retries,
+                    )
+
+                    await asyncio.sleep(0.5 * attempt)
+                    continue
+
+                # Validate JSON before caching
+                try:
+                    action = self._parse_action(content)
+                except Exception as parse_error:
+                    last_error = f"Parse error: {parse_error}"
+
+                    logger.warning(
+                        "Attempt %s/%s parse failed: %s",
+                        attempt,
+                        max_retries,
+                        parse_error,
+                    )
+
+                    await asyncio.sleep(0.5 * attempt)
+                    continue
+
+                if self.cache and cache_key:
+                    self.cache.set(cache_key, content)
+
+                return action
+
+            except Exception as e:
+                last_error = str(e)
+
+                logger.warning(
+                    "Attempt %s/%s failed: %s",
+                    attempt,
+                    max_retries,
+                    e,
+                )
+
+                await asyncio.sleep(0.5 * attempt)
+
+        logger.warning(
+            "All %s attempts failed. Returning WAIT action. Last error: %s",
+            max_retries,
+            last_error,
+        )
+
+        return Action(
+            type=ActionType.WAIT,
+            reasoning=f"LLM failed after {max_retries} attempts: {last_error}",
+        )
+
+    async def decide_old(self, system_prompt: str, user_prompt: str) -> Action:
         """Ask the LLM to decide an agent's next action."""
         cache_key = f"{system_prompt}|||{user_prompt}" if self.cache else None
 
@@ -101,11 +202,25 @@ class LLMProvider:
                 max_tokens=self.max_tokens,
                 frequency_penalty=self.frequency_penalty,
                 presence_penalty=self.presence_penalty,
-                response_format={"type": "json_object"},
+                #response_format={"type": "json_object"},
             )
+            
+            logger.warning("FULL RESPONSE=%s", response)
+
             content = response.choices[0].message.content
+                        
             if self.cache and cache_key:
                 self.cache.set(cache_key, content)
+                
+            if not content:
+                logger.warning(
+                    "Empty content returned. Full response=%r",
+                    response)
+
+                return Action(
+                    type=ActionType.WAIT,
+                    reasoning="Empty model response")
+                
             return self._parse_action(content)
 
         except Exception as e:

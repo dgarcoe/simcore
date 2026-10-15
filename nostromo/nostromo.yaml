@@ -1,0 +1,416 @@
+simulation:
+  name: "Nostromo"
+  description: "The commercial towing vessel Nostromo investigates a mysterious signal and unknowingly brings a lethal extraterrestrial organism aboard."
+  time_step: "15 minutes"
+  duration: "15 days"
+  seed: 42642
+  language: en
+
+llm:
+  model: "ollama/kamekichi128/qwen3-4b-instruct-2507:latest"
+  reflection_model: "ollama/kamekichi128/qwen3-4b-instruct-2507:latest"
+  cache: true
+  temperature: 0.8
+
+environment:
+  type: grid
+  size: [30, 20]
+
+  global_state:
+    threat_level: low
+    crew_morale: normal
+    ship_status: operational
+
+  locations:
+
+    - name: "Bridge"
+      type: command
+      position: [15, 3]
+      capacity: 6
+      properties:
+        description: "Primary command center of the Nostromo"
+
+    - name: "Medical Bay"
+      type: healthcare
+      position: [12, 10]
+      capacity: 6
+      properties:
+        description: "Medical and quarantine facilities"
+
+    - name: "Engineering"
+      type: engineering
+      position: [22, 16]
+      capacity: 8
+      properties:
+        description: "Power systems and engine room"
+
+    - name: "Science Lab"
+      type: research
+      position: [8, 14]
+      capacity: 4
+      properties:
+        description: "Scientific analysis and biological storage"
+
+    - name: "Cargo Hold"
+      type: storage
+      position: [15, 18]
+      capacity: 30
+      properties:
+        description: "Dark labyrinth of cargo containers"
+
+    - name: "Air Ducts"
+      type: maintenance
+      position: [27, 10]
+      capacity: 2
+      properties:
+        description: "Hidden ventilation network connecting the ship"
+
+    - name: "Crew Quarters"
+      type: residential
+      position: [6, 6]
+      capacity: 10
+      properties:
+        description: "Living area for the crew"
+
+    - name: "Escape Shuttle"
+      type: evacuation
+      position: [2, 16]
+      capacity: 4
+      properties:
+        description: "Emergency evacuation craft"
+
+agents:
+
+  - name: "Ellen Ripley"
+    age: 32
+    profession: "warrant officer"
+
+    personality:
+      openness: 0.7
+      conscientiousness: 0.95
+      extraversion: 0.5
+      agreeableness: 0.5
+      neuroticism: 0.4
+
+    goals:
+      - "protect the crew"
+      - "enforce safety procedures"
+      - "identify the threat"
+      - "survive"
+
+    starting_location: "Bridge"
+
+    backstory: >
+      Ripley is highly disciplined and believes every
+      safety rule exists for a reason. As strange events
+      escalate aboard the Nostromo, she becomes increasingly
+      suspicious that the crew is underestimating the danger.
+
+    resources:
+      authority: 80
+
+  - name: "Dallas"
+    age: 43
+    profession: "captain"
+
+    personality:
+      openness: 0.6
+      conscientiousness: 0.8
+      extraversion: 0.7
+      agreeableness: 0.6
+      neuroticism: 0.4
+
+    goals:
+      - "maintain control of the crew"
+      - "understand the threat"
+      - "save as many people as possible"
+
+    starting_location: "Bridge"
+
+    backstory: >
+      Captain of the Nostromo. He is respected by the crew,
+      but the rapidly unfolding crisis forces him into increasingly
+      difficult decisions.
+
+    resources:
+      authority: 100
+
+  - name: "Ash"
+    age: 35
+    profession: "science officer"
+
+    personality:
+      openness: 0.95
+      conscientiousness: 0.8
+      extraversion: 0.2
+      agreeableness: 0.1
+      neuroticism: 0.0
+
+    goals:
+      - "study the organism"
+      - "prevent the loss of valuable biological data"
+      - "avoid destruction of the specimen"
+
+    starting_location: "Science Lab"
+
+    backstory: >
+      Ash is fascinated by the organism's biology.
+      He believes its scientific value exceeds any risk
+      posed to the crew.
+
+    resources:
+      scientific_knowledge: 100
+
+  - name: "Parker"
+    age: 39
+    profession: "chief engineer"
+
+    personality:
+      openness: 0.3
+      conscientiousness: 0.8
+      extraversion: 0.8
+      agreeableness: 0.4
+      neuroticism: 0.3
+
+    goals:
+      - "keep the ship functional"
+      - "protect himself"
+      - "get the crew home alive"
+
+    starting_location: "Engineering"
+
+    backstory: >
+      Practical and direct. Parker has little patience for
+      corporate agendas and focuses on immediate survival.
+
+    resources:
+      tools: 20
+
+  - name: "Lambert"
+    age: 31
+    profession: "navigator"
+
+    personality:
+      openness: 0.5
+      conscientiousness: 0.6
+      extraversion: 0.4
+      agreeableness: 0.7
+      neuroticism: 0.95
+
+    goals:
+      - "avoid danger"
+      - "escape the ship if necessary"
+      - "stay alive"
+
+    starting_location: "Crew Quarters"
+
+    backstory: >
+      Lambert becomes increasingly fearful as unexplained
+      events accumulate throughout the ship.
+
+    resources:
+      navigation_data: 50
+
+  - name: "Alien"
+    age: 0
+    profession: "unknown organism"
+
+    personality:
+      openness: 0.0
+      conscientiousness: 1.0
+      extraversion: 0.0
+      agreeableness: 0.0
+      neuroticism: 0.0
+
+    goals:
+      - "remain hidden"
+      - "grow stronger"
+      - "hunt isolated crew members"
+      - "avoid coordinated groups"
+      - "survive at all costs"
+
+    starting_location: "Air Ducts"
+
+    backstory: >
+      A mysterious extraterrestrial organism loose aboard
+      the Nostromo. It does not understand human morality.
+      It is an adaptive predator driven by survival and hunting.
+
+    resources:
+      stealth: 100
+      strength: 100
+      speed: 100
+
+events:
+  scheduled:
+
+    - tick: 8
+      type: "facehugger_incident"
+      description: >
+        Kane returns from exploration with a strange organism
+        attached to his face. Arguments begin over quarantine
+        procedures and medical intervention.
+
+    - tick: 24
+      type: "false_recovery"
+      description: >
+        The organism detaches. Kane appears healthy and most
+        of the crew believes the danger has passed.
+
+    - tick: 36
+      type: "chestburster"
+      description: >
+        During a meal, a violent biological event occurs.
+        A small unknown creature escapes into the ship.
+
+      effects:
+        threat_level: medium
+
+    - tick: 60
+      type: "missing_specimen"
+      description: >
+        The creature cannot be found. Strange sounds are
+        reported in maintenance corridors and ventilation shafts.
+
+    - tick: 96
+      type: "first_sighting"
+      description: >
+        Several crew members glimpse a rapidly growing organism.
+        Accounts are inconsistent and not everyone believes them.
+
+    - tick: 132
+      type: "power_fluctuations"
+      description: >
+        Unexplained power interruptions affect several sections
+        of the ship.
+
+    - tick: 168
+      type: "first_disappearance"
+      description: >
+        A crew member disappears while working alone.
+        Search teams are organized.
+
+      effects:
+        threat_level: high
+
+    - tick: 204
+      type: "growing_fear"
+      description: >
+        Sleep becomes difficult. Crew members begin carrying
+        tools and improvised weapons for protection.
+
+    - tick: 240
+      type: "evidence_found"
+      description: >
+        Biological residue and damaged equipment suggest
+        the organism is larger and stronger than expected.
+
+    - tick: 288
+      type: "restricted_movement"
+      description: >
+        Crew members begin avoiding isolated sections of the
+        ship and prefer travelling in groups.
+
+    - tick: 336
+      type: "second_disappearance"
+      description: >
+        Another crew member vanishes under mysterious
+        circumstances.
+
+      effects:
+        crew_morale: low
+
+    - tick: 384
+      type: "ash_suspicious"
+      description: >
+        Questions arise regarding Ash's behavior and his
+        apparent interest in protecting the organism.
+
+    - tick: 432
+      type: "maintenance_failure"
+      description: >
+        Damage inside the ventilation network causes several
+        systems to operate unreliably.
+
+    - tick: 480
+      type: "organism_growth"
+      description: >
+        Sensor readings indicate the creature has reached
+        a size far beyond initial expectations.
+
+    - tick: 528
+      type: "crew_divided"
+      description: >
+        The remaining crew begins splitting into factions.
+        Some advocate evacuation while others insist on
+        hunting the organism.
+
+    - tick: 576
+      type: "ash_exposed"
+      description: >
+        Evidence emerges suggesting Ash has withheld critical
+        information about the organism.
+
+      effects:
+        trust_breakdown: true
+
+    - tick: 624
+      type: "air_duct_hunt"
+      description: >
+        A coordinated attempt is made to track the creature
+        through the ventilation system.
+
+    - tick: 672
+      type: "catastrophic_loss"
+      description: >
+        The hunt goes badly. Panic spreads and confidence
+        in leadership begins to collapse.
+
+      effects:
+        threat_level: critical
+
+    - tick: 720
+      type: "self_destruct_debate"
+      description: >
+        Serious discussions begin regarding destruction of
+        the Nostromo as a last resort.
+
+    - tick: 768
+      type: "last_safe_area"
+      description: >
+        Most of the ship is considered unsafe.
+        Survivors concentrate around a few defensible locations.
+
+    - tick: 816
+      type: "desperation"
+      description: >
+        Supplies are dwindling. Exhaustion and fear begin to
+        influence decision-making.
+
+    - tick: 864
+      type: "final_plan"
+      description: >
+        Survivors formulate a final coordinated strategy:
+        escape, destroy the organism, or destroy the ship.
+
+    - tick: 912
+      type: "endgame"
+      description: >
+        The remaining crew races against time as the organism
+        becomes increasingly bold and aggressive.
+
+    - tick: 948
+      type: "final_confrontation"
+      description: >
+        The organism and the surviving crew are on an inevitable
+        collision course. Every decision now has permanent
+        consequences.
+
+    - tick: 960
+      type: "resolution"
+      description: >
+        The fate of the Nostromo is decided. Survivors must
+        live with the consequences of the choices made during
+        ten days of fear, suspicion and survival.
+
+  injectable: true
