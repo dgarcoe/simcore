@@ -273,7 +273,7 @@ class SimulationEngine:
                 action = Action(type=ActionType.WAIT, reasoning="No social network available")
         elif action.type in (ActionType.SPEAK, ActionType.TRADE, ActionType.INTERACT):
             target = self._find_agent_by_name(action.target)
-            if target and not target.alive and target.location == agent.location:
+            if target and target.state.status == "dead" and target.location == agent.location:
                 action = Action(type=ActionType.WAIT, reasoning=f"{target.name} is dead")
             elif not target or not target.alive or target.id == agent.id or target.location != agent.location:
                 action = Action(type=ActionType.WAIT, reasoning="Target not present at this location")

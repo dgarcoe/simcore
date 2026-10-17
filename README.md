@@ -166,6 +166,38 @@ events:
       description: "Three residents arrive at the clinic with high fever and difficulty breathing."
 ```
 
+### Agent life cycle and event effects
+
+Agents have **health** (0–1) and a **status**: `alive`, `dead` or `departed`. Health appears in
+each agent's prompt; resting slowly heals light wounds. Dead agents stop acting and their body
+stays where they fell (people there see it); departed agents leave the simulation.
+
+```yaml
+agents:
+  - name: "Hunter"
+    health: 0.8          # starts hurt (default 1.0)
+    arrives_at: 5        # enters the world at tick 5 (default 0 = from the start)
+
+events:
+  scheduled:
+    - tick: 7
+      type: crisis
+      description: "The creature attacks the farm."
+      effects:
+        health: {"Tomás": -0.6, "location:Plaza": -0.1, "all": -0.05}   # health ≤ 0 → dies
+        kill: ["location:Farm"]          # a name, "location:<name>" or "all"
+        depart: "Mateo"                  # leaves alive
+        spawn:                           # new agents arrive (count numbers the names)
+          - {name: "Soldier", profession: "soldier", starting_location: "Plaza", count: 2}
+        farm: destroyed                  # any other key is written to global_state
+```
+
+Effects are validated when the scenario loads. The same `effects` can be sent at run time with
+`POST /api/inject` (`{"description": "...", "effects": {...}}`; 422 if invalid) or over the
+WebSocket. New events: `agent_spawn`, `agent_death`, `agent_depart` and `environment_change`;
+`simulation_end` carries a `reason` (`completed`, `stopped`, `no_agents_left`), and a run ends
+early when nobody is left.
+
 ---
 
 ## LLM Providers
