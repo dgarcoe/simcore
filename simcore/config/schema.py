@@ -34,6 +34,34 @@ class SpawnConfig(AgentConfig):
     count: int = Field(1, ge=1, le=50)
 
 
+USE_KEYS = ("health", "energy", "mood")
+
+
+class ItemConfig(BaseModel):
+    """An object agents can carry, give, trade and use."""
+
+    description: str = ""
+    # Consumed when used (food, medicine); otherwise it is kept (a tool).
+    consumable: bool = True
+    # Change applied to whoever the item is used on: {health: 0.4, energy: 0.2, mood: 0.1}.
+    on_use: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("on_use")
+    @classmethod
+    def _check_on_use(cls, value: dict[str, float]) -> dict[str, float]:
+        unknown = set(value) - set(USE_KEYS)
+        if unknown:
+            raise ValueError(f"on_use only accepts {', '.join(USE_KEYS)} (got {', '.join(sorted(unknown))})")
+        return {k: max(-1.0, min(1.0, float(v))) for k, v in value.items()}
+
+
+def _non_negative(value: dict[str, float]) -> dict[str, float]:
+    bad = [k for k, v in value.items() if v < 0]
+    if bad:
+        raise ValueError(f"amounts must be >= 0 ({', '.join(bad)})")
+    return value
+
+
 class LocationConfig(BaseModel):
     name: str
     type: str = "generic"
@@ -42,6 +70,15 @@ class LocationConfig(BaseModel):
     properties: dict[str, object] = Field(default_factory=dict)
     city: str = ""
     virtual: bool = False
+    # Items lying here that anyone can take.
+    stock: dict[str, float] = Field(default_factory=dict)
+    # Items added to the inventory of whoever works here, per work action.
+    produces: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("stock", "produces")
+    @classmethod
+    def _check_amounts(cls, value: dict[str, float]) -> dict[str, float]:
+        return _non_negative(value)
 
 
 class EnvironmentConfig(BaseModel):
@@ -98,3 +135,5 @@ class SimulationConfig(BaseModel):
     environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
     agents: list[AgentConfig] = Field(default_factory=list)
     events: EventsConfig = Field(default_factory=EventsConfig)
+    # Optional item catalog; items not listed here still work, without description or use.
+    items: dict[str, ItemConfig] = Field(default_factory=dict)

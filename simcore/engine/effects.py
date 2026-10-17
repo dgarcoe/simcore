@@ -8,6 +8,7 @@ An event's ``effects`` mapping mixes two kinds of keys:
       health: {"Frank": -0.5, "location:Clinic": -0.2, "all": -0.05}
       kill: ["Rosa"]                 # or "location:Mine", "all"
       depart: "Hank"                 # leaves the simulation alive
+      items: {"location:Clinic": {medicine: 10}, "Tomás": {food: -2}}
       spawn:                         # new agents arrive
         - {name: "Rescue worker", profession: "paramedic",
            starting_location: "Plaza", count: 2}
@@ -25,7 +26,7 @@ from typing import Any
 
 from simcore.config.schema import SpawnConfig
 
-RESERVED_KEYS = frozenset({"health", "kill", "depart", "spawn"})
+RESERVED_KEYS = frozenset({"health", "kill", "depart", "spawn", "items"})
 LOCATION_PREFIX = "location:"
 ALL = "all"
 
@@ -37,10 +38,13 @@ class Effects:
     kill: list[str] = field(default_factory=list)
     depart: list[str] = field(default_factory=list)
     spawn: list[SpawnConfig] = field(default_factory=list)
+    # target → {item: change}; location targets change the place's stock.
+    items: dict[str, dict[str, float]] = field(default_factory=dict)
 
     @property
     def empty(self) -> bool:
-        return not (self.global_updates or self.health or self.kill or self.depart or self.spawn)
+        return not (self.global_updates or self.health or self.kill or self.depart or self.spawn
+                    or self.items)
 
 
 def _targets(value: Any, key: str) -> list[str]:
@@ -75,6 +79,15 @@ def parse_effects(raw: dict[str, Any] | None) -> Effects:
             out.kill = _targets(value, key)
         elif key == "depart":
             out.depart = _targets(value, key)
+        elif key == "items":
+            if not isinstance(value, dict):
+                raise ValueError("effects.items must map targets to items, e.g. {Ana: {food: 2}}")
+            for target, changes in value.items():
+                if not isinstance(changes, dict) or not all(
+                    isinstance(n, (int, float)) and not isinstance(n, bool) for n in changes.values()
+                ):
+                    raise ValueError(f"effects.items.{target} must map item names to numbers")
+                out.items[str(target)] = {str(k): float(n) for k, n in changes.items()}
         elif key == "spawn":
             items = value if isinstance(value, list) else [value]
             for item in items:

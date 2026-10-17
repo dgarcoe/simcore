@@ -15,6 +15,15 @@ from simcore.llm.cache import ResponseCache
 logger = logging.getLogger("simcore.llm")
 
 
+def _amount(value) -> float:
+    """Item quantities: positive numbers, 1 when missing or unreadable."""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    return amount if amount > 0 else 1.0
+
+
 def _strip_json_artifacts(text: str) -> str:
     """Salvage plain prose from a response that leaked JSON structure.
 
@@ -346,13 +355,25 @@ class LLMProvider:
         """Parse LLM JSON response into an Action."""
         try:
             data = json.loads(content)
+            if not isinstance(data, dict):
+                raise ValueError("expected a JSON object")
             action_type = ActionType(data.get("action", "wait"))
+            params = data.get("parameters") if isinstance(data.get("parameters"), dict) else {}
+
+            def field(key: str, default=""):
+                value = data.get(key, params.get(key))
+                return default if value is None else value
+
             return Action(
                 type=action_type,
-                target=data.get("target", ""),
-                content=data.get("content", ""),
-                reasoning=data.get("reasoning", ""),
-                parameters=data.get("parameters", {}),
+                target=str(field("target")),
+                content=str(field("content")),
+                reasoning=str(field("reasoning")),
+                parameters=params,
+                item=str(field("item")).strip(),
+                amount=_amount(field("amount", 1)),
+                ask_item=str(field("ask_item")).strip(),
+                ask_amount=_amount(field("ask_amount", 1)),
             )
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"Failed to parse action: {e}. Content: {content[:200]}")

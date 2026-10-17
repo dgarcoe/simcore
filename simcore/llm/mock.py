@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import re
 
 from simcore.agents.actions import Action, ActionType
 
@@ -30,6 +31,11 @@ class MockLLMProvider:
         extraversion = self._extract_trait(system_prompt, "outgoing")
         is_creative = "curious" in system_prompt.lower()
         is_hardworker = "organized" in system_prompt.lower() or "disciplined" in system_prompt.lower()
+
+        # Items: answer offers, pick up, use, give or offer things.
+        item_action = self._item_decision(user_prompt, nearby)
+        if item_action:
+            return item_action
 
         # Decision logic
         roll = self._rng.random()
@@ -65,19 +71,19 @@ class MockLLMProvider:
                 reasoning=f"I want to socialize with {target}",
             )
 
-        # Trade with nearby people
+        # Do business with nearby people (real exchanges of items are decided above)
         if has_people and nearby and roll < 0.65:
             target = self._rng.choice(nearby)
-            trades = [
+            deals = [
                 "offering a small discount on my products",
                 "looking to buy some supplies",
                 "proposing a collaboration",
                 "sharing some market insights for a favor",
             ]
             return Action(
-                type=ActionType.TRADE,
+                type=ActionType.INTERACT,
                 target=target,
-                content=self._rng.choice(trades),
+                content=self._rng.choice(deals),
                 reasoning=f"Good opportunity to do business with {target}",
             )
 
@@ -133,6 +139,41 @@ class MockLLMProvider:
             type=ActionType.WAIT,
             reasoning="Nothing interesting to do right now",
         )
+
+    def _item_decision(self, prompt: str, nearby: list[str]) -> Action | None:
+        inventory = _items_after(prompt, "Your inventory: ")
+        stock = _items_after(prompt, "Items you can take here: ")
+        usable = re.findall(r"(?:^|; |Item guide: )([\w-]+)(?: \([^)]*\))? — use:", prompt)
+        hurt = _names_after(prompt, "Visibly hurt or sick: ")
+        roll = self._rng.random()
+
+        offers = re.findall(r"^- (.+?) offers you ", prompt, re.MULTILINE)
+        if offers:
+            seller = offers[0]
+            if roll < 0.7:
+                return Action(type=ActionType.ACCEPT, target=seller, reasoning=f"A fair deal with {seller}")
+            return Action(type=ActionType.DECLINE, target=seller, reasoning="I'd rather keep what I have")
+
+        mine_usable = [i for i in usable if i in inventory]
+        if mine_usable and hurt and roll < 0.35:
+            return Action(type=ActionType.USE, item=mine_usable[0], target=self._rng.choice(hurt),
+                          reasoning="Someone here needs help")
+        if stock and roll < 0.12:
+            item = self._rng.choice(sorted(stock))
+            return Action(type=ActionType.TAKE, item=item, amount=1, reasoning=f"Some {item} could be useful")
+        if mine_usable and roll < 0.18:
+            return Action(type=ActionType.USE, item=self._rng.choice(mine_usable), reasoning="I could use this now")
+        if inventory and nearby and roll < 0.24:
+            item = self._rng.choice(sorted(inventory))
+            return Action(type=ActionType.GIVE, target=self._rng.choice(nearby), item=item, amount=1,
+                          reasoning=f"They need {item} more than I do")
+        if inventory and nearby and roll < 0.32:
+            item = self._rng.choice(sorted(inventory))
+            wanted = sorted((set(usable) | set(stock)) - {item})
+            return Action(type=ActionType.TRADE, target=self._rng.choice(nearby), item=item, amount=1,
+                          ask_item=self._rng.choice(wanted) if wanted else "", ask_amount=1,
+                          reasoning=f"Let's see if I can exchange some {item}")
+        return None
 
     async def translate(self, text: str, language: str) -> str:
         return text  # demo mode — no translation
@@ -205,3 +246,18 @@ class MockLLMProvider:
             "cache_hit_rate": 0.0,
             "mode": "demo",
         }
+
+
+def _items_after(prompt: str, marker: str) -> dict[str, float]:
+    """'Your inventory: medicine x2, food x1.' → {'medicine': 2, 'food': 1}."""
+    if marker not in prompt:
+        return {}
+    line = prompt[prompt.index(marker) + len(marker):].split("\n", 1)[0]
+    return {m[0]: float(m[1]) for m in re.findall(r"([\w-]+) x([\d.]+)", line)}
+
+
+def _names_after(prompt: str, marker: str) -> list[str]:
+    if marker not in prompt:
+        return []
+    line = prompt[prompt.index(marker) + len(marker):].split("\n", 1)[0].rstrip(".")
+    return [n.strip() for n in line.split(",") if n.strip()]

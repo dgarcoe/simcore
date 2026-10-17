@@ -16,6 +16,8 @@ class Location:
     city: str = ""
     virtual: bool = False
     properties: dict[str, object] = field(default_factory=dict)
+    stock: dict[str, float] = field(default_factory=dict)
+    produces: dict[str, float] = field(default_factory=dict)
     _occupants: set[str] = field(default_factory=set, repr=False)
 
     @property
@@ -49,4 +51,6 @@ class Location:
             "occupants": self.get_occupants(),
             "occupant_count": self.occupant_count,
             "properties": self.properties,
+            "stock": self.stock,
+            "produces": self.produces,
         }

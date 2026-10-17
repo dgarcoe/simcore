@@ -198,6 +198,33 @@ WebSocket. New events: `agent_spawn`, `agent_death`, `agent_depart` and `environ
 `simulation_end` carries a `reason` (`completed`, `stopped`, `no_agents_left`), and a run ends
 early when nobody is left.
 
+### Items: inventory, stock, production and trade
+
+Agents' `resources` are a real inventory. Locations can hold `stock` (anyone there can take it)
+and `produces` items for whoever works there. An optional `items` catalog describes them and
+what they do when used:
+
+```yaml
+items:
+  medicine: {description: "first-aid kit", on_use: {health: 0.4}}   # consumed when used
+  radio:    {description: "radio", consumable: false, on_use: {mood: 0.1}}
+environment:
+  locations:
+    - {name: "Clinic", stock: {medicine: 3}}
+    - {name: "Farm", produces: {food: 2}}
+agents:
+  - {name: "Ana", resources: {medicine: 1, money: 10}}
+```
+
+Agents decide with new actions (`item`, `amount`, `ask_item`, `ask_amount` in the JSON):
+`give` (to someone here), `take` / `drop` (location stock), `use` (on oneself or someone here),
+`trade` (an offer the other answers with `accept` / `decline` within 2 ticks). The engine checks
+every action (you can't give what you don't have) and tells the agent why it failed. Events can
+add or remove items: `effects: {items: {"location:Clinic": {medicine: 5}, "Ana": {food: -1}}}`.
+New events: `item_transfer` (`kind`: give, take, drop, use, trade, produce, effect),
+`trade_offer` and `trade_result`; agent action events also carry `action_type`, `target`,
+`item` and `amount`.
+
 ---
 
 ## LLM Providers

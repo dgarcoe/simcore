@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+from dataclasses import dataclass
 from typing import Any
 
-from simcore.agents.actions import Action, ActionType
+from simcore.agents.actions import ITEM_ACTIONS, Action, ActionType, fmt_amount
 from simcore.agents.agent import Agent, AgentState
 from simcore.agents.persona import Persona, PersonalityTraits
 from simcore.config.schema import AgentConfig, SimulationConfig
@@ -23,6 +24,35 @@ from simcore.world.location import Location
 logger = logging.getLogger("simcore")
 
 
+@dataclass
+class TradeOffer:
+    """A pending exchange: ``seller`` gives item x amount for ask_item x ask_amount."""
+
+    seller: str  # agent id
+    buyer: str  # agent id
+    item: str
+    amount: float
+    ask_item: str
+    ask_amount: float
+    expires: int  # last tick it can be answered
+
+    def describe(self, seller: str, buyer: str) -> str:
+        ask = f" for {fmt_amount(self.ask_amount)} {self.ask_item}" if self.ask_item else " as a gift"
+        return f"{seller} offers {buyer} {fmt_amount(self.amount)} {self.item}{ask}"
+
+
+def _add(inv: dict[str, float], item: str, amount: float) -> None:
+    left = inv.get(item, 0) + amount
+    if left > 1e-9:
+        inv[item] = left
+    else:
+        inv.pop(item, None)
+
+
+def _has(inv: dict[str, float], item: str, amount: float) -> bool:
+    return bool(item) and inv.get(item, 0) + 1e-9 >= amount
+
+
 class SimulationEngine:
     """Core simulation engine that orchestrates agents, environment, and time."""
 
@@ -36,6 +66,7 @@ class SimulationEngine:
         # Agents that enter later (arrives_at > 0), by tick.
         self._arrivals: dict[int, list[AgentConfig]] = {}
         self.end_reason = ""
+        self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
         if demo_mode:
@@ -82,6 +113,8 @@ class SimulationEngine:
                 city=loc_cfg.city,
                 virtual=loc_cfg.virtual,
                 properties=dict(loc_cfg.properties),
+                stock=dict(loc_cfg.stock),
+                produces=dict(loc_cfg.produces),
             ))
         return env
 
@@ -196,6 +229,8 @@ class SimulationEngine:
             data={"time": self.clock.format_time(), "progress": self.clock.progress},
         ))
 
+        await self._expire_offers(tick)
+
         # New arrivals, then scheduled events
         for agent_cfg in self._arrivals.pop(tick, []):
             await self._spawn(agent_cfg, tick, cause="")
@@ -212,7 +247,7 @@ class SimulationEngine:
 
         # Resolve interactions
         for agent, action in zip(agent_list, decisions):
-            if action and action.type in (ActionType.SPEAK, ActionType.TRADE, ActionType.INTERACT):
+            if action and action.type in (ActionType.SPEAK, ActionType.INTERACT):
                 target = self._find_agent_by_name(action.target)
                 if target and target.alive and target.location == agent.location:
                     result = self.interaction_resolver.resolve(agent, target, action, tick)
@@ -271,7 +306,9 @@ class SimulationEngine:
                         other.observe(description, tick, importance=0.6)
             else:
                 action = Action(type=ActionType.WAIT, reasoning="No social network available")
-        elif action.type in (ActionType.SPEAK, ActionType.TRADE, ActionType.INTERACT):
+        elif action.type in ITEM_ACTIONS:
+            action = await self._apply_item_action(agent, action, tick)
+        elif action.type in (ActionType.SPEAK, ActionType.INTERACT):
             target = self._find_agent_by_name(action.target)
             if target and target.state.status == "dead" and target.location == agent.location:
                 action = Action(type=ActionType.WAIT, reasoning=f"{target.name} is dead")
@@ -279,6 +316,8 @@ class SimulationEngine:
                 action = Action(type=ActionType.WAIT, reasoning="Target not present at this location")
 
         agent.apply_action(action, tick)
+        if action.type == ActionType.WORK:
+            await self._produce(agent, tick)
 
         # Emit event
         event_type = {
@@ -289,7 +328,15 @@ class SimulationEngine:
 
         await self.event_bus.emit(SimEvent(
             type=event_type, tick=tick,
-            data={"action": action.describe(), "reasoning": action.reasoning},
+            data={
+                "action": action.describe(),
+                "reasoning": action.reasoning,
+                # Structured copy of the action (the text above stays for older clients).
+                "action_type": action.type.value,
+                "target": action.target,
+                "content": action.content,
+                **({"item": action.item, "amount": action.amount} if action.item else {}),
+            },
             source=agent.name,
         ))
 
@@ -329,6 +376,21 @@ class SimulationEngine:
             global_context=str(self.environment.global_state) if self.environment.global_state else "",
             social_network_hint=self._SOCIAL_HINT.get(lang, self._SOCIAL_HINT["en"]) if self._has_virtual else "",
         )
+        stock = {k: v for k, v in location.stock.items() if v > 0}
+        if stock:
+            observation += "\nItems you can take here: " + ", ".join(
+                f"{k} x{fmt_amount(v)}" for k, v in stock.items()) + "."
+        if location.produces:
+            observation += "\nWorking here produces: " + ", ".join(
+                f"{k} x{fmt_amount(v)}" for k, v in location.produces.items()) + "."
+        offers = [o for o in self._offers if o.buyer == agent.id]
+        if offers:
+            observation += "\nOffers waiting for your answer (accept or decline, target = who offers):"
+            for o in offers:
+                observation += f"\n- {o.describe(self.agents[o.seller].name, 'you')}"
+        guide = self._item_guide(set(agent.state.resources) | set(stock))
+        if guide:
+            observation += f"\nItem guide: {guide}."
         bodies = [a.name for a in self.agents.values() if a.state.status == "dead" and a.location == agent.location]
         if bodies:
             observation += f"\nDead bodies here: {', '.join(bodies)}."
@@ -420,6 +482,8 @@ class SimulationEngine:
                     agent.observe(f"I got hurt{f' ({cause})' if cause else ''}.", tick, importance=0.8)
                     if agent.state.health <= 0:
                         await self.kill(agent, tick, cause)
+        for spec, changes in effects.items.items():
+            await self._apply_item_effect(spec, changes, tick, cause)
         for spec in effects.kill:
             for agent in self._resolve_targets(spec):
                 await self.kill(agent, tick, cause)
@@ -440,6 +504,7 @@ class SimulationEngine:
             return
         agent.state.status = "dead"
         agent.state.health = 0.0
+        self._drop_offers(agent)
         place = self.environment.get_location(agent.location)
         if place:
             place.remove_occupant(agent.id)
@@ -460,6 +525,7 @@ class SimulationEngine:
         if not agent.alive:
             return
         agent.state.status = "departed"
+        self._drop_offers(agent)
         place = self.environment.get_location(agent.location)
         if place:
             place.remove_occupant(agent.id)
@@ -491,6 +557,208 @@ class SimulationEngine:
         ))
         return agent
 
+    # ── Items ─────────────────────────────────────────────────────────
+
+    def _item_guide(self, names: set[str]) -> str:
+        parts = []
+        for name in sorted(names):
+            item = self.config.items.get(name)
+            if not item:
+                continue
+            use = ", ".join(f"{k} {'+' if v >= 0 else ''}{v:g}" for k, v in item.on_use.items())
+            text = name + (f" ({item.description})" if item.description else "")
+            if use:
+                text += f" — use: {use}{'' if item.consumable else ', reusable'}"
+            parts.append(text)
+        return "; ".join(parts)
+
+    async def _transfer(self, tick: int, kind: str, item: str, amount: float, source: str = "",
+                        to: str = "", location: str = "") -> None:
+        await self.event_bus.emit(SimEvent(
+            type=EventType.ITEM_TRANSFER, tick=tick,
+            data={"kind": kind, "item": item, "amount": amount, "from": source, "to": to,
+                  "location": location},
+            source=source or to,
+        ))
+
+    async def _refuse(self, agent: Agent, action: Action, tick: int, why: str) -> Action:
+        agent.observe(f"I tried to {action.describe()} but couldn't: {why}.", tick, importance=0.5)
+        return Action(type=ActionType.WAIT, reasoning=f"Couldn't {action.describe()}: {why}. {action.reasoning}".strip())
+
+    def _present(self, agent: Agent, name: str) -> Agent | None:
+        other = self._find_agent_by_name(name)
+        if other and other.alive and other.id != agent.id and other.location == agent.location:
+            return other
+        return None
+
+    async def _apply_item_action(self, agent: Agent, action: Action, tick: int) -> Action:
+        """Checks and applies give/take/drop/use/trade/accept/decline. Returns the action
+        actually done (WAIT with the reason when it isn't possible)."""
+        inv = agent.state.resources
+        place = self.environment.get_location(agent.location)
+        item, amount = action.item, action.amount
+        kind = action.type
+
+        if kind in (ActionType.GIVE, ActionType.DROP, ActionType.TRADE) and not _has(inv, item, amount):
+            return await self._refuse(agent, action, tick, f"I don't have {fmt_amount(amount)} {item or 'of that'}")
+
+        if kind == ActionType.GIVE:
+            other = self._present(agent, action.target)
+            if not other:
+                return await self._refuse(agent, action, tick, f"{action.target or 'nobody'} is not here")
+            _add(inv, item, -amount)
+            _add(other.state.resources, item, amount)
+            other.observe(f"{agent.name} gave me {fmt_amount(amount)} {item}.", tick, importance=0.7)
+            other.memory.update_relationship(agent.name, 0.1, tick, f"gave me {item}")
+            agent.memory.update_relationship(other.name, 0.03, tick, f"I gave {item}")
+            agent.state.mood = min(1.0, agent.state.mood + 0.03)
+            await self._transfer(tick, "give", item, amount, agent.name, other.name, agent.location)
+            return action
+
+        if kind == ActionType.TAKE:
+            if not place or not _has(place.stock, item, amount):
+                return await self._refuse(agent, action, tick, f"there is no {fmt_amount(amount)} {item or 'such item'} here")
+            _add(place.stock, item, -amount)
+            _add(inv, item, amount)
+            await self._transfer(tick, "take", item, amount, f"location:{place.name}", agent.name, place.name)
+            return action
+
+        if kind == ActionType.DROP:
+            if not place:
+                return await self._refuse(agent, action, tick, "there is nowhere to leave it")
+            _add(inv, item, -amount)
+            _add(place.stock, item, amount)
+            await self._transfer(tick, "drop", item, amount, agent.name, f"location:{place.name}", place.name)
+            return action
+
+        if kind == ActionType.USE:
+            spec = self.config.items.get(item)
+            if not _has(inv, item, 1):
+                return await self._refuse(agent, action, tick, f"I don't have any {item or 'item'}")
+            if not spec or not spec.on_use:
+                return await self._refuse(agent, action, tick, f"{item} has no use")
+            on = agent
+            if action.target and action.target.strip().lower() not in (agent.name.lower(), "self", "me", "myself"):
+                on = self._present(agent, action.target)
+                if not on:
+                    return await self._refuse(agent, action, tick, f"{action.target} is not here")
+            if spec.consumable:
+                _add(inv, item, -1)
+            for key, delta in spec.on_use.items():
+                low = -1.0 if key == "mood" else 0.0
+                setattr(on.state, key, max(low, min(1.0, getattr(on.state, key) + delta)))
+            if on is not agent:
+                on.observe(f"{agent.name} used {item} on me.", tick, importance=0.7)
+                on.memory.update_relationship(agent.name, 0.1, tick, f"used {item} on me")
+            await self._transfer(tick, "use", item, 1 if spec.consumable else 0, agent.name, on.name, agent.location)
+            action.target = "" if on is agent else on.name
+            return action
+
+        if kind == ActionType.TRADE:
+            other = self._present(agent, action.target)
+            if not other:
+                return await self._refuse(agent, action, tick, f"{action.target or 'nobody'} is not here")
+            offer = TradeOffer(agent.id, other.id, item, amount, action.ask_item, action.ask_amount,
+                               expires=tick + 2)
+            self._offers = [o for o in self._offers if not (o.seller == agent.id and o.buyer == other.id)]
+            self._offers.append(offer)
+            other.observe(offer.describe(agent.name, "me") + ".", tick, importance=0.7)
+            await self.event_bus.emit(SimEvent(
+                type=EventType.TRADE_OFFER, tick=tick,
+                data={"from": agent.name, "to": other.name, "item": item, "amount": amount,
+                      "ask_item": action.ask_item, "ask_amount": action.ask_amount if action.ask_item else 0,
+                      "expires": offer.expires},
+                source=agent.name,
+            ))
+            return action
+
+        # ACCEPT / DECLINE
+        seller = self._find_agent_by_name(action.target)
+        offer = next((o for o in self._offers if seller and o.seller == seller.id and o.buyer == agent.id), None)
+        if not offer:
+            return await self._refuse(agent, action, tick, f"{action.target or 'nobody'} has no offer for me")
+        self._offers.remove(offer)
+        if kind == ActionType.DECLINE:
+            seller.observe(f"{agent.name} declined my offer.", tick, importance=0.6)
+            await self._trade_result(offer, False, "declined", tick)
+            return action
+        if seller.location != agent.location or not seller.alive:
+            await self._trade_result(offer, False, "not together any more", tick)
+            return await self._refuse(agent, action, tick, f"{seller.name} is not here any more")
+        if not _has(seller.state.resources, offer.item, offer.amount):
+            await self._trade_result(offer, False, f"{seller.name} no longer has it", tick)
+            return await self._refuse(agent, action, tick, f"{seller.name} no longer has {offer.item}")
+        if offer.ask_item and not _has(inv, offer.ask_item, offer.ask_amount):
+            await self._trade_result(offer, False, f"{agent.name} can't pay", tick)
+            return await self._refuse(agent, action, tick, f"I don't have {fmt_amount(offer.ask_amount)} {offer.ask_item}")
+        _add(seller.state.resources, offer.item, -offer.amount)
+        _add(inv, offer.item, offer.amount)
+        await self._transfer(tick, "trade", offer.item, offer.amount, seller.name, agent.name, agent.location)
+        if offer.ask_item:
+            _add(inv, offer.ask_item, -offer.ask_amount)
+            _add(seller.state.resources, offer.ask_item, offer.ask_amount)
+            await self._transfer(tick, "trade", offer.ask_item, offer.ask_amount, agent.name, seller.name,
+                                 agent.location)
+        seller.observe(f"{agent.name} accepted my offer.", tick, importance=0.7)
+        # Mood and relationship bump of a completed deal.
+        self.interaction_resolver.resolve(seller, agent, Action(
+            type=ActionType.TRADE, target=agent.name,
+            content=offer.describe(seller.name, agent.name)), tick)
+        await self._trade_result(offer, True, "", tick)
+        return action
+
+    async def _trade_result(self, offer: TradeOffer, accepted: bool, reason: str, tick: int) -> None:
+        await self.event_bus.emit(SimEvent(
+            type=EventType.TRADE_RESULT, tick=tick,
+            data={"from": self.agents[offer.seller].name, "to": self.agents[offer.buyer].name,
+                  "item": offer.item, "amount": offer.amount, "ask_item": offer.ask_item,
+                  "ask_amount": offer.ask_amount, "accepted": accepted, "reason": reason},
+            source=self.agents[offer.buyer].name,
+        ))
+
+    async def _expire_offers(self, tick: int) -> None:
+        for offer in [o for o in self._offers if o.expires < tick]:
+            self._offers.remove(offer)
+            await self._trade_result(offer, False, "expired", tick)
+
+    def _drop_offers(self, agent: Agent) -> None:
+        self._offers = [o for o in self._offers if agent.id not in (o.seller, o.buyer)]
+
+    async def _produce(self, agent: Agent, tick: int) -> None:
+        place = self.environment.get_location(agent.location)
+        if not place or not place.produces:
+            return
+        for item, amount in place.produces.items():
+            _add(agent.state.resources, item, amount)
+            await self._transfer(tick, "produce", item, amount, f"location:{place.name}", agent.name, place.name)
+
+    async def _apply_item_effect(self, spec: str, changes: dict[str, float], tick: int, cause: str) -> None:
+        """Effects ``items``: add/remove items for agents or a location's stock."""
+        if spec.lower().startswith(LOCATION_PREFIX):
+            where = spec[len(LOCATION_PREFIX):].strip()
+            place = next((p for p in self.environment.locations.values() if p.name.lower() == where.lower()), None)
+            if not place:
+                logger.warning(f"Effect target '{spec}' matches no location")
+                return
+            for item, delta in changes.items():
+                delta = max(delta, -place.stock.get(item, 0))
+                if delta:
+                    _add(place.stock, item, delta)
+                    await self._transfer(tick, "effect", item, abs(delta), "" if delta > 0 else spec,
+                                         spec if delta > 0 else "", place.name)
+            return
+        for agent in self._resolve_targets(spec):
+            for item, delta in changes.items():
+                delta = max(delta, -agent.state.resources.get(item, 0))
+                if not delta:
+                    continue
+                _add(agent.state.resources, item, delta)
+                verb = "received" if delta > 0 else "lost"
+                agent.observe(f"I {verb} {fmt_amount(abs(delta))} {item}{f' ({cause})' if cause else ''}.",
+                              tick, importance=0.6)
+                await self._transfer(tick, "effect", item, abs(delta), "" if delta > 0 else agent.name,
+                                     agent.name if delta > 0 else "", agent.location)
+
     def _find_agent_by_name(self, name: str | None) -> Agent | None:
         """Find an agent by name (case-insensitive)."""
         if not isinstance(name, str) or not name.strip():
@@ -515,6 +783,12 @@ class SimulationEngine:
         return {
             "clock": self.clock.to_dict(),
             "agents": {aid: a.to_dict() for aid, a in self.agents.items()},
+            "items": {name: item.model_dump() for name, item in self.config.items.items()},
+            "offers": [
+                {"from": self.agents[o.seller].name, "to": self.agents[o.buyer].name, "item": o.item,
+                 "amount": o.amount, "ask_item": o.ask_item, "ask_amount": o.ask_amount, "expires": o.expires}
+                for o in self._offers
+            ],
             "pending_arrivals": sorted(
                 (cfg.name for t, cfgs in self._arrivals.items() if t > self.clock.current_tick for cfg in cfgs)
             ),

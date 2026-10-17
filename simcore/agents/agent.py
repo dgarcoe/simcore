@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from simcore.agents.actions import Action, ActionType
+from simcore.agents.actions import Action, ActionType, fmt_amount
 from simcore.agents.memory import MemorySystem
 from simcore.agents.persona import Persona
 
@@ -93,9 +93,11 @@ class Agent:
             f"Mood: {'positive' if self.state.mood > 0.2 else 'negative' if self.state.mood < -0.2 else 'neutral'}. "
             f"Energy: {energy_desc}. Health: {health_desc}."
         )
-        if self.state.resources:
-            resources_str = ", ".join(f"{k}: {v}" for k, v in self.state.resources.items())
-            state_desc += f" Resources: {resources_str}."
+        held = {k: v for k, v in self.state.resources.items() if v > 0}
+        if held:
+            state_desc += f" Your inventory: {', '.join(f'{k} x{fmt_amount(v)}' for k, v in held.items())}."
+        else:
+            state_desc += " Your inventory: nothing."
 
         # Pull last 3 dialogue lines THIS agent said, to discourage repetition.
         recent_lines = []
@@ -133,15 +135,27 @@ Current situation:
 
 Decide your next action. Respond in this exact JSON format:
 {{
-    "action": "move|speak|trade|interact|wait|observe|work|rest",
+    "action": "move|speak|interact|wait|observe|work|rest|give|take|drop|use|trade|accept|decline",
     "target": "<see target rules below>",
     "content": "<what you say or do>",
+    "item": "<item name, only for give/take/drop/use/trade>",
+    "amount": 1,
+    "ask_item": "<only for trade: what you want in return>",
+    "ask_amount": 1,
     "reasoning": "<brief internal thought>"
 }}
 
+Item rules:
+- "give": hand "amount" of an item from your inventory to "target" (a person here).
+- "take": pick up an item listed under "Items you can take here". "drop": leave one of yours here.
+- "use": use an item from your inventory on yourself (empty target) or on a person here (e.g. medicine to heal them).
+- "trade": offer "item" x "amount" to "target" in exchange for "ask_item" x "ask_amount". They answer later.
+- "accept" / "decline": answer an offer made to you; "target" is the person who made it.
+- Only use item names you actually have or that are available here.
+
 Target rules (strict):
 - For "move": target MUST be the exact name of an available location (not a person).
-- For "speak", "trade", "interact": target MUST be the exact name of a real person listed in "People here" above. NEVER a location name, shop name, building, or invented person. If "People here" is empty or "You are alone", you CANNOT speak/trade/interact — choose move, observe, work, or rest instead.
+- For "speak", "trade", "interact", "give": target MUST be the exact name of a real person listed in "People here" above. NEVER a location name, shop name, building, or invented person. If "People here" is empty or "You are alone", you CANNOT speak/trade/interact — choose move, observe, work, or rest instead.
 - For "observe", "work", "rest", "wait": target can be empty or a brief noun (e.g., "surroundings").
 
 {language_directive(language)}"""

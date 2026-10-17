@@ -29,6 +29,9 @@ class EventType(Enum):
     AGENT_SPAWN = "agent_spawn"
     AGENT_DEATH = "agent_death"
     AGENT_DEPART = "agent_depart"
+    ITEM_TRANSFER = "item_transfer"
+    TRADE_OFFER = "trade_offer"
+    TRADE_RESULT = "trade_result"
 
 
 @dataclass
