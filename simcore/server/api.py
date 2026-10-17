@@ -7,7 +7,7 @@ import json
 import logging
 from pathlib import Path
 
-from fastapi import Body, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -129,7 +129,13 @@ def create_app(engine: SimulationEngine | None = None,
             return {"error": "No simulation loaded"}
         description = payload.get("description", "")
         location = payload.get("location", "")
-        await server_state["engine"].inject_event(description, location)
+        effects = payload.get("effects") or None
+        if not description and not effects:
+            raise HTTPException(422, "description or effects required")
+        try:
+            await server_state["engine"].inject_event(description, location, effects)
+        except ValueError as e:
+            raise HTTPException(422, str(e))
         return {"status": "ok", "description": description}
 
     @app.post("/api/language")
@@ -308,9 +314,10 @@ def create_app(engine: SimulationEngine | None = None,
                         await server_state["engine"].inject_event(
                             cmd.get("description", ""),
                             cmd.get("location", ""),
+                            cmd.get("effects") or None,
                         )
-                except json.JSONDecodeError:
-                    pass
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.warning(f"Ignored WebSocket command: {e}")
         except WebSocketDisconnect:
             if websocket in server_state["websockets"]:
                 server_state["websockets"].remove(websocket)

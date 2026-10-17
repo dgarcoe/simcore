@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class PersonalityConfig(BaseModel):
@@ -22,6 +22,16 @@ class AgentConfig(BaseModel):
     starting_location: str = ""
     resources: dict[str, float] = Field(default_factory=dict)
     backstory: str = ""
+    # 0 = dead, 1 = fully healthy. Below ~0.3 the agent knows it is badly hurt.
+    health: float = Field(1.0, ge=0.0, le=1.0)
+    # Tick at which the agent enters the world (0 = present from the start).
+    arrives_at: int = Field(0, ge=0)
+
+
+class SpawnConfig(AgentConfig):
+    """An agent brought in by an event; ``count`` > 1 numbers the names."""
+
+    count: int = Field(1, ge=1, le=50)
 
 
 class LocationConfig(BaseModel):
@@ -47,6 +57,13 @@ class ScheduledEventConfig(BaseModel):
     description: str
     effects: dict[str, object] = Field(default_factory=dict)
     translations: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("effects")
+    @classmethod
+    def _check_effects(cls, value: dict[str, object]) -> dict[str, object]:
+        from simcore.engine.effects import parse_effects
+        parse_effects(value)
+        return value
 
 
 class EventsConfig(BaseModel):

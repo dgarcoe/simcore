@@ -26,6 +26,9 @@ class EventType(Enum):
     SIMULATION_START = "simulation_start"
     SIMULATION_END = "simulation_end"
     REFLECTION = "reflection"
+    AGENT_SPAWN = "agent_spawn"
+    AGENT_DEATH = "agent_death"
+    AGENT_DEPART = "agent_depart"
 
 
 @dataclass

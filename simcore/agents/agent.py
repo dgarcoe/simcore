@@ -19,18 +19,24 @@ class AgentState:
     resources: dict[str, float] = field(default_factory=dict)
     current_action: Action | None = None
     custom: dict[str, object] = field(default_factory=dict)
+    health: float = 1.0  # 0.0 (dead) to 1.0
+    status: str = "alive"  # alive | dead | departed
 
 
 class Agent:
     """An autonomous agent in the simulation."""
 
     def __init__(self, persona: Persona, state: AgentState | None = None,
-                 memory_config: dict | None = None):
+                 memory_config: dict | None = None, agent_id: str | None = None):
         self.persona = persona
         self.state = state or AgentState()
         self.memory = MemorySystem(**(memory_config or {}))
-        self.id = persona.name.lower().replace(" ", "_")
+        self.id = agent_id or persona.name.lower().replace(" ", "_")
         self._action_history: list[Action] = []
+
+    @property
+    def alive(self) -> bool:
+        return self.state.status == "alive"
 
     @property
     def name(self) -> str:
@@ -74,10 +80,18 @@ class Agent:
             energy_desc = "high"
         else:
             energy_desc = "moderate"
+        if self.state.health < 0.3:
+            health_desc = "CRITICAL — you are badly hurt or sick and could die; get help or treatment"
+        elif self.state.health < 0.6:
+            health_desc = "hurt — you are injured or unwell"
+        elif self.state.health < 0.9:
+            health_desc = "minor injuries"
+        else:
+            health_desc = "good"
         state_desc = (
             f"Current state: You are at {self.state.location}. "
             f"Mood: {'positive' if self.state.mood > 0.2 else 'negative' if self.state.mood < -0.2 else 'neutral'}. "
-            f"Energy: {energy_desc}."
+            f"Energy: {energy_desc}. Health: {health_desc}."
         )
         if self.state.resources:
             resources_str = ", ".join(f"{k}: {v}" for k, v in self.state.resources.items())
@@ -143,6 +157,9 @@ Target rules (strict):
             case ActionType.REST:
                 self.state.energy = min(1.0, self.state.energy + 0.3)
                 self.state.mood = min(1.0, self.state.mood + 0.05)
+                # Resting slowly heals light wounds; serious ones need treatment.
+                if 0.3 <= self.state.health < 1.0:
+                    self.state.health = min(1.0, self.state.health + 0.02)
             case ActionType.WORK:
                 self.state.energy = max(0.0, self.state.energy - 0.2)
             case ActionType.SPEAK | ActionType.INTERACT:
@@ -166,7 +183,9 @@ Target rules (strict):
         return {
             "id": self.id,
             "name": self.name,
+            "profession": self.persona.profession,
             "location": self.state.location,
+            "status": self.state.status,
             "personality": {
                 "openness": self.persona.personality.openness,
                 "conscientiousness": self.persona.personality.conscientiousness,
@@ -177,6 +196,8 @@ Target rules (strict):
             "state": {
                 "mood": self.state.mood,
                 "energy": self.state.energy,
+                "health": self.state.health,
+                "status": self.state.status,
                 "location": self.state.location,
                 "current_action": self.state.current_action.describe() if self.state.current_action else None,
                 "resources": self.state.resources,
