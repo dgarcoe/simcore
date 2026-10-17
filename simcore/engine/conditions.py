@@ -229,15 +229,16 @@ class ConditionsMixin:
         action.content = template.replace("{target}", tname).replace("{actor}", agent.name)
         action.target = tname
         action.parameters = {**action.parameters, "success": success}
+        cause = f"{agent.name} {action.content}"  # e.g. "Ramón muerde a Mateo", in the scenario's words
         if success:
             if target:
-                await self._apply_outcome(target, act.on_target, tick, f"{name} by {agent.name}")
+                await self._apply_outcome(target, act.on_target, tick, cause)
                 target.observe(f"{agent.name} did '{name}' to me.", tick, importance=0.9)
                 target.memory.update_relationship(agent.name, -0.1 if act.on_target.health < 0 else 0.05,
                                                   tick, name)
             elif not act.on_target.empty:
-                await self._apply_outcome(agent, act.on_target, tick, name)
-            await self._apply_outcome(agent, act.on_self, tick, name)
+                await self._apply_outcome(agent, act.on_target, tick, cause)
+            await self._apply_outcome(agent, act.on_self, tick, cause)
             if act.world:
                 self.environment.global_state.update(act.world)
                 await self.event_bus.emit(SimEvent(
