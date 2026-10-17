@@ -357,8 +357,16 @@ class LLMProvider:
             data = json.loads(content)
             if not isinstance(data, dict):
                 raise ValueError("expected a JSON object")
-            action_type = ActionType(data.get("action", "wait"))
-            params = data.get("parameters") if isinstance(data.get("parameters"), dict) else {}
+            raw_action = str(data.get("action", "wait")).strip()
+            params = dict(data["parameters"]) if isinstance(data.get("parameters"), dict) else {}
+            try:
+                action_type = ActionType(raw_action.lower())
+            except ValueError:
+                if not raw_action or not raw_action.replace("_", "").replace("-", "").isalnum():
+                    raise
+                # Possibly a scenario action (bite, shoot…): the engine checks it exists.
+                action_type = ActionType.CUSTOM
+                params["name"] = raw_action.lower()
 
             def field(key: str, default=""):
                 value = data.get(key, params.get(key))

@@ -32,6 +32,11 @@ class MockLLMProvider:
         is_creative = "curious" in system_prompt.lower()
         is_hardworker = "organized" in system_prompt.lower() or "disciplined" in system_prompt.lower()
 
+        # Scenario actions (bite, shoot, barricade…) when available.
+        special = self._special_decision(user_prompt, nearby)
+        if special:
+            return special
+
         # Items: answer offers, pick up, use, give or offer things.
         item_action = self._item_decision(user_prompt, nearby)
         if item_action:
@@ -139,6 +144,22 @@ class MockLLMProvider:
             type=ActionType.WAIT,
             reasoning="Nothing interesting to do right now",
         )
+
+    def _special_decision(self, prompt: str, nearby: list[str]) -> Action | None:
+        if "Special actions you can do now" not in prompt or self._rng.random() > 0.3:
+            return None
+        block = prompt.split("Special actions you can do now", 1)[1]
+        options = re.findall(r"^- ([\w-]+) \((target: a person here|no target)", block, re.MULTILINE)
+        if not options:
+            return None
+        name, kind = self._rng.choice(options)
+        target = ""
+        if kind.startswith("target"):
+            if not nearby:
+                return None
+            target = self._rng.choice(nearby)
+        return Action(type=ActionType.CUSTOM, target=target, parameters={"name": name},
+                      reasoning=f"This is the moment to {name}")
 
     def _item_decision(self, prompt: str, nearby: list[str]) -> Action | None:
         inventory = _items_after(prompt, "Your inventory: ")

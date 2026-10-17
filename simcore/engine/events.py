@@ -32,6 +32,7 @@ class EventType(Enum):
     ITEM_TRANSFER = "item_transfer"
     TRADE_OFFER = "trade_offer"
     TRADE_RESULT = "trade_result"
+    CONDITION_CHANGE = "condition_change"
 
 
 @dataclass

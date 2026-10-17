@@ -225,6 +225,52 @@ New events: `item_transfer` (`kind`: give, take, drop, use, trade, produce, effe
 `trade_offer` and `trade_result`; agent action events also carry `action_type`, `target`,
 `item` and `amount`.
 
+### Conditions, scenario actions and rule-controlled agents
+
+**Conditions** are states an agent can be in. Each one can have:
+- a description the agent reads, and an appearance others notice;
+- effects every tick, and a duration after which it ends or `becomes` another condition;
+- contagion, through interactions or by sharing a place.
+
+A condition with `controller: rules` takes the agent away from the LLM: it acts on targets
+present, seeks the place where most targets are, or roams. This suits zombies, animals or
+crowds, and costs no LLM calls.
+
+**Scenario actions** are offered in the prompt only to agents who can use them. The engine
+resolves each one:
+- requirements on the actor (`who`) and on the target (`target_requires`): conditions,
+  professions, items;
+- an item `cost`, spent even when the action fails;
+- a success `chance`;
+- outcomes for the target and for the actor: health, energy, mood, conditions, items, death;
+- `world` updates.
+
+```yaml
+conditions:
+  infected: {description: "fever and a bite", appearance: "looks feverish", per_tick: {health: -0.03},
+             duration: 5, becomes: zombie, contagion: {chance: 0.15, via: interaction}}
+  zombie:   {appearance: "a walking corpse", controller: rules, rules: {action: bite, seek: true}}
+actions:
+  bite:  {who: {conditions: [zombie]}, target_requires: {not_conditions: [zombie]}, chance: 0.6,
+          on_target: {health: -0.3, add_conditions: [infected]}, message: "bites {target}"}
+  shoot: {who: {items: {shotgun: 1}}, target_requires: {conditions: [zombie]}, cost: {ammo: 1},
+          on_target: {health: -1}, message: "shoots {target}"}
+items:
+  antidote: {cures: [infected]}
+agents:
+  - {name: "Ramón", conditions: [infected]}
+```
+
+- **Events** can `add_condition` / `remove_condition` (`{Ana: infected, "location:Plaza": panicked}`),
+  and spawned agents can start with conditions.
+- **Validation:** references to unknown conditions or actions are rejected when the scenario
+  loads.
+- **New event:** `condition_change` (`added`, `removed`, `transformed`). Custom action events carry
+  `name` and `success`.
+- **State:** agents expose their `conditions`, and the state includes the `conditions` and
+  `actions` catalogs.
+- **LLM answers:** an unknown action name is reported as a parse error.
+
 ---
 
 ## LLM Providers

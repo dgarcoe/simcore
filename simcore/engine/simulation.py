@@ -13,6 +13,7 @@ from simcore.agents.agent import Agent, AgentState
 from simcore.agents.persona import Persona, PersonalityTraits
 from simcore.config.schema import AgentConfig, SimulationConfig
 from simcore.engine.clock import SimClock
+from simcore.engine.conditions import ConditionsMixin
 from simcore.engine.effects import ALL, LOCATION_PREFIX, Effects, parse_effects
 from simcore.engine.events import EventBus, EventType, SimEvent
 from simcore.llm.prompts import OBSERVATION_PROMPT
@@ -53,7 +54,7 @@ def _has(inv: dict[str, float], item: str, amount: float) -> bool:
     return bool(item) and inv.get(item, 0) + 1e-9 >= amount
 
 
-class SimulationEngine:
+class SimulationEngine(ConditionsMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -170,6 +171,10 @@ class SimulationEngine:
         while agent_id in self.agents:
             agent_id += "_"
         agent = Agent(persona=persona, state=state, agent_id=agent_id)
+        for name in agent_cfg.conditions:
+            cond = self.config.conditions.get(name)
+            if cond:
+                agent.state.conditions[name] = cond.duration
         self.agents[agent.id] = agent
         self.environment.place_agent(agent.id, start_loc)
         return agent
@@ -235,6 +240,8 @@ class SimulationEngine:
         for agent_cfg in self._arrivals.pop(tick, []):
             await self._spawn(agent_cfg, tick, cause="")
         await self._process_scheduled_events(tick)
+        if self.config.conditions:
+            await self._condition_tick(tick)
 
         # Each living agent observes, decides, acts
         agent_list = self.living_agents
@@ -276,14 +283,19 @@ class SimulationEngine:
     async def _agent_turn(self, agent: Agent, tick: int) -> Any:
         """Run one agent's observation → decision → action cycle."""
         lang = getattr(self.config, "language", "en")
-        observation = self._build_observation(agent, tick, lang)
-        agent.observe(observation, tick, importance=0.3)
-        prompt = agent.build_prompt(observation, language=lang)
-        persona_prompt = agent.persona.to_prompt()
-        if lang != "en":
-            from simcore.llm.prompts import language_directive
-            persona_prompt = f"{persona_prompt}\n\n{language_directive(lang)}"
-        action = await self.llm.decide(persona_prompt, prompt)
+        controller = self._controller(agent)
+        if controller is not None:
+            # Rule-controlled (a zombie, an animal, a crowd): no LLM call.
+            action = self._rule_decision(agent, controller)
+        else:
+            observation = self._build_observation(agent, tick, lang)
+            agent.observe(observation, tick, importance=0.3)
+            prompt = agent.build_prompt(observation, language=lang)
+            persona_prompt = agent.persona.to_prompt()
+            if lang != "en":
+                from simcore.llm.prompts import language_directive
+                persona_prompt = f"{persona_prompt}\n\n{language_directive(lang)}"
+            action = await self.llm.decide(persona_prompt, prompt)
 
         # Apply action
         if action.type == ActionType.MOVE:
@@ -308,6 +320,8 @@ class SimulationEngine:
                 action = Action(type=ActionType.WAIT, reasoning="No social network available")
         elif action.type in ITEM_ACTIONS:
             action = await self._apply_item_action(agent, action, tick)
+        elif action.type == ActionType.CUSTOM:
+            action = await self._apply_custom_action(agent, action, tick)
         elif action.type in (ActionType.SPEAK, ActionType.INTERACT):
             target = self._find_agent_by_name(action.target)
             if target and target.state.status == "dead" and target.location == agent.location:
@@ -318,6 +332,12 @@ class SimulationEngine:
         agent.apply_action(action, tick)
         if action.type == ActionType.WORK:
             await self._produce(agent, tick)
+        if self.config.conditions and action.target and action.type in (
+                ActionType.SPEAK, ActionType.INTERACT, ActionType.GIVE, ActionType.TRADE,
+                ActionType.ACCEPT, ActionType.USE, ActionType.CUSTOM):
+            other = self._present(agent, action.target)
+            if other:
+                await self._spread_by_interaction(agent, other, tick)
 
         # Emit event
         event_type = {
@@ -336,6 +356,8 @@ class SimulationEngine:
                 "target": action.target,
                 "content": action.content,
                 **({"item": action.item, "amount": action.amount} if action.item else {}),
+                **({"name": action.parameters.get("name"), "success": action.parameters.get("success", True)}
+                   if action.type == ActionType.CUSTOM and action.parameters.get("name") else {}),
             },
             source=agent.name,
         ))
@@ -388,6 +410,10 @@ class SimulationEngine:
             observation += "\nOffers waiting for your answer (accept or decline, target = who offers):"
             for o in offers:
                 observation += f"\n- {o.describe(self.agents[o.seller].name, 'you')}"
+        if self.config.conditions or self.config.actions:
+            extra = self._conditions_prompt(agent)
+            if extra:
+                observation += "\n" + extra
         guide = self._item_guide(set(agent.state.resources) | set(stock))
         if guide:
             observation += f"\nItem guide: {guide}."
@@ -404,6 +430,8 @@ class SimulationEngine:
         """Run periodic reflection for all agents."""
         lang = getattr(self.config, "language", "en")
         for agent in self.living_agents:
+            if self._controller(agent) is not None:
+                continue  # rule-controlled agents don't reflect
             memories = agent.memory.get_context(max_entries=10)
             if memories:
                 summary = await self.llm.reflect(memories, language=lang)
@@ -484,6 +512,14 @@ class SimulationEngine:
                         await self.kill(agent, tick, cause)
         for spec, changes in effects.items.items():
             await self._apply_item_effect(spec, changes, tick, cause)
+        for spec, names in effects.remove_condition.items():
+            for agent in self._resolve_targets(spec):
+                for name in names:
+                    await self.remove_condition(agent, name, tick, cause)
+        for spec, names in effects.add_condition.items():
+            for agent in self._resolve_targets(spec):
+                for name in names:
+                    await self.add_condition(agent, name, tick, cause)
         for spec in effects.kill:
             for agent in self._resolve_targets(spec):
                 await self.kill(agent, tick, cause)
@@ -565,7 +601,8 @@ class SimulationEngine:
             item = self.config.items.get(name)
             if not item:
                 continue
-            use = ", ".join(f"{k} {'+' if v >= 0 else ''}{v:g}" for k, v in item.on_use.items())
+            use = ", ".join([f"{k} {'+' if v >= 0 else ''}{v:g}" for k, v in item.on_use.items()]
+                            + [f"cures {c}" for c in item.cures])
             text = name + (f" ({item.description})" if item.description else "")
             if use:
                 text += f" — use: {use}{'' if item.consumable else ', reusable'}"
@@ -635,7 +672,7 @@ class SimulationEngine:
             spec = self.config.items.get(item)
             if not _has(inv, item, 1):
                 return await self._refuse(agent, action, tick, f"I don't have any {item or 'item'}")
-            if not spec or not spec.on_use:
+            if not spec or not (spec.on_use or spec.cures):
                 return await self._refuse(agent, action, tick, f"{item} has no use")
             on = agent
             if action.target and action.target.strip().lower() not in (agent.name.lower(), "self", "me", "myself"):
@@ -647,6 +684,8 @@ class SimulationEngine:
             for key, delta in spec.on_use.items():
                 low = -1.0 if key == "mood" else 0.0
                 setattr(on.state, key, max(low, min(1.0, getattr(on.state, key) + delta)))
+            for name in spec.cures:
+                await self.remove_condition(on, name, tick, f"{item} from {agent.name}")
             if on is not agent:
                 on.observe(f"{agent.name} used {item} on me.", tick, importance=0.7)
                 on.memory.update_relationship(agent.name, 0.1, tick, f"used {item} on me")
@@ -784,6 +823,15 @@ class SimulationEngine:
             "clock": self.clock.to_dict(),
             "agents": {aid: a.to_dict() for aid, a in self.agents.items()},
             "items": {name: item.model_dump() for name, item in self.config.items.items()},
+            "conditions": {
+                name: {"description": c.description, "appearance": c.appearance, "color": c.color,
+                       "controller": c.controller, "becomes": c.becomes, "duration": c.duration}
+                for name, c in self.config.conditions.items()
+            },
+            "actions": {
+                name: {"description": a.description, "target": a.target}
+                for name, a in self.config.actions.items()
+            },
             "offers": [
                 {"from": self.agents[o.seller].name, "to": self.agents[o.buyer].name, "item": o.item,
                  "amount": o.amount, "ask_item": o.ask_item, "ask_amount": o.ask_amount, "expires": o.expires}

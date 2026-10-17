@@ -9,6 +9,8 @@ An event's ``effects`` mapping mixes two kinds of keys:
       kill: ["Rosa"]                 # or "location:Mine", "all"
       depart: "Hank"                 # leaves the simulation alive
       items: {"location:Clinic": {medicine: 10}, "Tomás": {food: -2}}
+      add_condition: {"Tomás": infected}             # scenario conditions
+      remove_condition: {"all": [panicked]}
       spawn:                         # new agents arrive
         - {name: "Rescue worker", profession: "paramedic",
            starting_location: "Plaza", count: 2}
@@ -26,7 +28,8 @@ from typing import Any
 
 from simcore.config.schema import SpawnConfig
 
-RESERVED_KEYS = frozenset({"health", "kill", "depart", "spawn", "items"})
+RESERVED_KEYS = frozenset({"health", "kill", "depart", "spawn", "items", "add_condition",
+                           "remove_condition"})
 LOCATION_PREFIX = "location:"
 ALL = "all"
 
@@ -40,11 +43,14 @@ class Effects:
     spawn: list[SpawnConfig] = field(default_factory=list)
     # target → {item: change}; location targets change the place's stock.
     items: dict[str, dict[str, float]] = field(default_factory=dict)
+    # target → condition names
+    add_condition: dict[str, list[str]] = field(default_factory=dict)
+    remove_condition: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def empty(self) -> bool:
         return not (self.global_updates or self.health or self.kill or self.depart or self.spawn
-                    or self.items)
+                    or self.items or self.add_condition or self.remove_condition)
 
 
 def _targets(value: Any, key: str) -> list[str]:
@@ -88,6 +94,10 @@ def parse_effects(raw: dict[str, Any] | None) -> Effects:
                 ):
                     raise ValueError(f"effects.items.{target} must map item names to numbers")
                 out.items[str(target)] = {str(k): float(n) for k, n in changes.items()}
+        elif key in ("add_condition", "remove_condition"):
+            if not isinstance(value, dict):
+                raise ValueError(f"effects.{key} must map targets to conditions, e.g. {{Ana: infected}}")
+            getattr(out, key).update({str(t): _targets(v, f"{key}.{t}") for t, v in value.items()})
         elif key == "spawn":
             items = value if isinstance(value, list) else [value]
             for item in items:

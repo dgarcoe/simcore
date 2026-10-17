@@ -21,6 +21,8 @@ class AgentState:
     custom: dict[str, object] = field(default_factory=dict)
     health: float = 1.0  # 0.0 (dead) to 1.0
     status: str = "alive"  # alive | dead | departed
+    # Scenario conditions → ticks left (None = until something removes it).
+    conditions: dict[str, int | None] = field(default_factory=dict)
 
 
 class Agent:
@@ -152,6 +154,7 @@ Item rules:
 - "trade": offer "item" x "amount" to "target" in exchange for "ask_item" x "ask_amount". They answer later.
 - "accept" / "decline": answer an offer made to you; "target" is the person who made it.
 - Only use item names you actually have or that are available here.
+- If "Special actions" are listed in your situation, you may use one: put its name in "action".
 
 Target rules (strict):
 - For "move": target MUST be the exact name of an available location (not a person).
@@ -212,6 +215,7 @@ Target rules (strict):
                 "energy": self.state.energy,
                 "health": self.state.health,
                 "status": self.state.status,
+                "conditions": dict(self.state.conditions),
                 "location": self.state.location,
                 "current_action": self.state.current_action.describe() if self.state.current_action else None,
                 "resources": self.state.resources,

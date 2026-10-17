@@ -163,4 +163,6 @@ def _dict_to_config(data: dict):
     sim_data["agents"] = data.get("agents", [])
     sim_data["events"] = data.get("events", {})
     sim_data["items"] = data.get("items", {})
+    sim_data["conditions"] = data.get("conditions", {})
+    sim_data["actions"] = data.get("actions", {})
     return SimulationConfig(**sim_data)
