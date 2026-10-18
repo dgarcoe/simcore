@@ -90,6 +90,9 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
         self.interaction_resolver = InteractionResolver()
         self._running = False
         self._paused = False
+        # The tick being computed, so stop() can interrupt it instead of waiting for the LLM.
+        self._tick_task: asyncio.Task | None = None
+        self._stop_event = asyncio.Event()
         self._rng = random.Random(config.seed)
         # True when scenario has at least one virtual location (enables POST action)
         self._has_virtual = any(
@@ -196,6 +199,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
     async def run(self) -> None:
         """Run the simulation until completion or stop signal."""
         self._running = True
+        self._stop_event.clear()
         logger.info(f"Starting simulation: {self.config.name}")
         logger.info(f"  Agents: {len(self.agents)}")
         logger.info(f"  Locations: {len(self.environment.locations)}")
@@ -215,16 +219,28 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
                 self.clock.current_tick -= 1  # undo advance while paused
                 continue
 
-            await self._run_tick()
+            self._tick_task = asyncio.ensure_future(self._run_tick())
+            try:
+                await self._tick_task
+            except asyncio.CancelledError:
+                if self._running:  # cancelled from outside, not by stop(): propagate
+                    raise
+                logger.info(f"Stopped in the middle of tick {self.clock.current_tick}.")
+                break
+            finally:
+                self._tick_task = None
 
             if not self.living_agents and not any(t > self.clock.current_tick for t in self._arrivals):
                 self.end_reason = "no_agents_left"
                 logger.info("Nobody is left in the simulation — ending early.")
                 break
 
-            # Delay between ticks for real-time visualization
+            # Delay between ticks for real-time visualization (a stop ends it at once)
             if self.tick_delay > 0:
-                await asyncio.sleep(self.tick_delay)
+                try:
+                    await asyncio.wait_for(self._stop_event.wait(), self.tick_delay)
+                except asyncio.TimeoutError:
+                    pass
 
         if not self.end_reason:
             self.end_reason = "stopped" if not self._running else "completed"
@@ -873,7 +889,11 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
         self._paused = False
 
     def stop(self) -> None:
+        """Stop now: the tick in progress (agents waiting on the LLM) is cancelled."""
         self._running = False
+        self._stop_event.set()
+        if self._tick_task is not None and not self._tick_task.done():
+            self._tick_task.cancel()
 
     def get_state(self) -> dict:
         """Get full simulation state snapshot."""

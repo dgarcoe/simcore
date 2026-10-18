@@ -165,3 +165,48 @@ def test_state_exposes_health_and_status():
     agents = engine.get_state()["agents"]
     assert agents["carla"]["status"] == "dead"
     assert agents["ana"]["state"]["health"] == 1.0
+
+
+def test_stop_interrupts_a_slow_tick():
+    import time
+
+    engine = SimulationEngine(make_config(duration="2 days"), demo_mode=True, tick_delay=5)
+    events = collect(engine)
+
+    async def slow(*_):
+        await asyncio.sleep(30)  # an LLM that takes forever
+        return Action(type=ActionType.WAIT)
+
+    engine.llm.decide = slow
+
+    async def scenario():
+        runner = asyncio.create_task(engine.run())
+        await asyncio.sleep(0.2)
+        start = time.monotonic()
+        engine.stop()
+        await asyncio.wait_for(runner, 2)
+        return time.monotonic() - start
+
+    took = run(scenario())
+    assert took < 1
+    end = events[-1]
+    assert end.type == EventType.SIMULATION_END and end.data["reason"] == "stopped"
+
+
+def test_stop_skips_the_wait_between_ticks():
+    import time
+
+    engine = SimulationEngine(make_config(duration="2 days"), demo_mode=True, tick_delay=30)
+    events = collect(engine)
+
+    async def scenario():
+        runner = asyncio.create_task(engine.run())
+        while not any(e.type == EventType.TICK_END for e in events):
+            await asyncio.sleep(0.01)
+        start = time.monotonic()
+        engine.stop()
+        await asyncio.wait_for(runner, 2)
+        return time.monotonic() - start
+
+    assert run(scenario()) < 1
+    assert events[-1].data["reason"] == "stopped"
