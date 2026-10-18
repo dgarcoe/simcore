@@ -138,7 +138,9 @@ def parse_effects(raw: dict[str, Any] | None) -> Effects:
         elif key == "rumor":
             if not isinstance(value, dict):
                 raise ValueError("effects.rumor must map targets to a text, e.g. {Ana: \"The well is poisoned\"}")
+            from simcore.config.schema import _yaml_true_key
             for target, r in value.items():
+                r = _yaml_true_key(r)
                 if isinstance(r, str) and r.strip():
                     out.rumor[str(target)] = (r.strip(), None)
                 elif isinstance(r, dict) and isinstance(r.get("text"), str) and r["text"].strip():

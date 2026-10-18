@@ -44,9 +44,21 @@ class RelationshipConfig(BaseModel):
     sentiment: float = Field(0.0, ge=-1.0, le=1.0)
 
 
+def _yaml_true_key(value: object) -> object:
+    """YAML reads an unquoted `true:` key as the boolean True: accept both spellings."""
+    if isinstance(value, dict) and True in value and "true" not in value:
+        value = {("true" if k is True else k): v for k, v in value.items()}
+    return value
+
+
 class BeliefConfig(BaseModel):
     text: str
     true: bool | None = None  # ground truth, for the UI; agents never see it
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_yaml_true(cls, value: object) -> object:
+        return _yaml_true_key(value)
 
 
 class SpawnConfig(AgentConfig):

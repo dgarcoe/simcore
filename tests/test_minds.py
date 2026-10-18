@@ -7,6 +7,7 @@ import pytest
 
 from simcore.agents.actions import Action, ActionType
 from simcore.config.schema import SimulationConfig
+from simcore.engine.effects import parse_effects
 from simcore.engine.events import EventType
 from simcore.engine.simulation import SimulationEngine
 from simcore.llm.provider import LLMProvider, parse_plan
@@ -152,3 +153,19 @@ def test_demo_run_shares_and_plans():
     asyncio.run(e.run())
     assert of(e, EventType.AGENT_PLAN)
     assert of(e, EventType.BELIEF_SHARED)
+
+
+def test_yaml_true_keys_keep_the_ground_truth(tmp_path):
+    from simcore.config.loader import load_config
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "simulation: {name: Y}\n"
+        "environment: {locations: [{name: Plaza}]}\n"
+        "agents:\n  - {name: Ana, starting_location: Plaza, beliefs: [{text: The well is poisoned, true: false}]}\n"
+        "events:\n  scheduled:\n    - {tick: 1, type: x, description: d, effects: {rumor: {Ana: {text: A lie, true: false}}}}\n"
+    )
+    e = SimulationEngine(load_config(path), demo_mode=True)
+    assert e.agents["ana"].state.beliefs[0]["truth"] is False
+    asyncio.run(e.apply_effects(parse_effects(e.config.events.scheduled[0].effects), 1))
+    assert e.agents["ana"].state.beliefs[-1]["truth"] is False
