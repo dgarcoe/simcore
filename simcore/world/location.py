@@ -18,6 +18,9 @@ class Location:
     properties: dict[str, object] = field(default_factory=dict)
     stock: dict[str, float] = field(default_factory=dict)
     produces: dict[str, float] = field(default_factory=dict)
+    closed: bool = False
+    access: object | None = None  # simcore.config.schema.Requirement
+    hazard: object | None = None  # simcore.config.schema.HazardConfig
     _occupants: set[str] = field(default_factory=set, repr=False)
 
     @property
@@ -53,4 +56,7 @@ class Location:
             "properties": self.properties,
             "stock": self.stock,
             "produces": self.produces,
+            "closed": self.closed,
+            "access": self.access.model_dump(exclude_defaults=True) if self.access is not None else None,
+            "hazard": self.hazard.model_dump() if self.hazard is not None else None,
         }

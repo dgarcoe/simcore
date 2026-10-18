@@ -33,6 +33,9 @@ class EventType(Enum):
     TRADE_OFFER = "trade_offer"
     TRADE_RESULT = "trade_result"
     CONDITION_CHANGE = "condition_change"
+    NEED_CHANGE = "need_change"
+    PLACE_CHANGE = "place_change"
+    RULE_FIRED = "rule_fired"
 
 
 @dataclass

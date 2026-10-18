@@ -271,6 +271,52 @@ agents:
   `actions` catalogs.
 - **LLM answers:** an unknown action name is reported as a parse error.
 
+### Needs, world rules and places with state
+
+**Needs** (hunger, sleep, fear…):
+- They grow every tick, for the agents matching `who`, and are relieved by using an item, by an
+  action (optionally in a place), or by resting or working in a place.
+- Once at 1 they hurt (`at_max`).
+- Agents see the high ones in their prompt, with what relieves them.
+
+**World rules** fire when every listed check in `when` holds:
+- `at`, `every`, `from` / `until`;
+- `global` variables (`lt`, `lte`, `gt`, `gte`, `eq`, `ne`);
+- `alive` count, `count` (with a condition, without one, or in a place);
+- `place` state.
+
+What happens is described in `then` with the events' effects language. Two keys are only
+useful there:
+- `adjust` adds to numeric world variables;
+- `end` ends the run with that message (`simulation_end` gets `reason: rule`).
+
+`once` makes a rule fire a single time.
+
+**Places** can be `closed`, can restrict `access` (conditions, professions, items) and can
+have a `hazard` that hurts or adds a condition every tick:
+- the `locations` effect changes them at run time;
+- agents (rule-controlled ones too) can't walk into a place they aren't allowed in;
+- prompts list closed and dangerous places.
+
+```yaml
+needs:
+  hunger: {label: hunger, grows: 0.05, relief: 0.6, satisfied_by: {items: [food]}, at_max: {health: -0.03}}
+  sleep:  {grows: 0.04, satisfied_by: {places: [Home]}}
+rules:
+  - {description: "The air goes stale", when: {every: 2}, then: {adjust: {oxygen: -0.1}}}
+  - {when: {count: {condition: zombie, gte: 3}}, then: {end: "The village has fallen"}, once: true}
+  - {when: {at: 12}, then: {locations: {Farm: {hazard: {label: on fire, per_tick: {health: -0.2}}}}}}
+environment:
+  locations:
+    - {name: Church, access: {professions: [priest]}}
+agents:
+  - {name: Ana, needs: {hunger: 0.4}}
+```
+
+- **New events:** `need_change` (`high`, `critical`, `ok`), `place_change`, `rule_fired`.
+- **State:** agents expose `needs`; places expose `closed`, `access` and `hazard`.
+- **Validation:** unknown needs, places, conditions or actions are rejected on load.
+
 ---
 
 ## LLM Providers

@@ -294,7 +294,8 @@ class ConditionsMixin:
                 victim = self._rng.choice(usable)
                 return Action(type=ActionType.CUSTOM, target=victim.name,
                               parameters={"name": rules.action}, reasoning=f"{own}: goes for {victim.name}")
-        places = [p for p in self.environment.locations.values() if not p.virtual and p.type != "virtual"]
+        places = [p for p in self.environment.locations.values()
+                  if not p.virtual and p.type != "virtual" and self._can_enter(agent, p)[0]]
         if rules.seek and not here:
             counts = {p.name: sum(1 for a in self.living_agents if a.location == p.name and is_target(a))
                       for p in places}

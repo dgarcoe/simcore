@@ -14,6 +14,7 @@ from simcore.agents.persona import Persona, PersonalityTraits
 from simcore.config.schema import AgentConfig, SimulationConfig
 from simcore.engine.clock import SimClock
 from simcore.engine.conditions import ConditionsMixin
+from simcore.engine.world import WorldMixin
 from simcore.engine.effects import ALL, LOCATION_PREFIX, Effects, parse_effects
 from simcore.engine.events import EventBus, EventType, SimEvent
 from simcore.llm.prompts import OBSERVATION_PROMPT
@@ -54,7 +55,7 @@ def _has(inv: dict[str, float], item: str, amount: float) -> bool:
     return bool(item) and inv.get(item, 0) + 1e-9 >= amount
 
 
-class SimulationEngine(ConditionsMixin):
+class SimulationEngine(ConditionsMixin, WorldMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -67,6 +68,8 @@ class SimulationEngine(ConditionsMixin):
         # Agents that enter later (arrives_at > 0), by tick.
         self._arrivals: dict[int, list[AgentConfig]] = {}
         self.end_reason = ""
+        self.end_message = ""
+        self._fired_rules: set[int] = set()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -116,6 +119,9 @@ class SimulationEngine(ConditionsMixin):
                 properties=dict(loc_cfg.properties),
                 stock=dict(loc_cfg.stock),
                 produces=dict(loc_cfg.produces),
+                closed=loc_cfg.closed,
+                access=loc_cfg.access,
+                hazard=loc_cfg.hazard,
             ))
         return env
 
@@ -175,6 +181,8 @@ class SimulationEngine(ConditionsMixin):
             cond = self.config.conditions.get(name)
             if cond:
                 agent.state.conditions[name] = cond.duration
+        for name in self.config.needs:
+            agent.state.needs[name] = max(0.0, min(1.0, float(agent_cfg.needs.get(name, 0.0))))
         self.agents[agent.id] = agent
         self.environment.place_agent(agent.id, start_loc)
         return agent
@@ -198,6 +206,7 @@ class SimulationEngine(ConditionsMixin):
         ))
 
         self.end_reason = ""
+        self.end_message = ""
         while self._running and self.clock.advance():
             if self._paused:
                 await asyncio.sleep(0.1)
@@ -221,7 +230,7 @@ class SimulationEngine(ConditionsMixin):
         await self.event_bus.emit(SimEvent(
             type=EventType.SIMULATION_END,
             tick=self.clock.current_tick,
-            data={"llm_stats": self.llm.stats, "reason": self.end_reason},
+            data={"llm_stats": self.llm.stats, "reason": self.end_reason, "message": self.end_message},
         ))
         logger.info(f"Simulation complete. LLM stats: {self.llm.stats}")
 
@@ -242,6 +251,14 @@ class SimulationEngine(ConditionsMixin):
         await self._process_scheduled_events(tick)
         if self.config.conditions:
             await self._condition_tick(tick)
+        if self.config.needs:
+            await self._needs_tick(tick)
+        await self._hazards_tick(tick)
+        if self.config.rules:
+            await self._rules_tick(tick)
+            if not self._running:  # a rule ended the run
+                await self.event_bus.emit(SimEvent(type=EventType.TICK_END, tick=tick, data=self.get_state()))
+                return
 
         # Each living agent observes, decides, acts
         agent_list = self.living_agents
@@ -300,11 +317,12 @@ class SimulationEngine(ConditionsMixin):
         # Apply action
         if action.type == ActionType.MOVE:
             target_loc = self.environment.get_location(action.target or "")
-            moved = bool(target_loc) and self.environment.move_agent(
+            allowed, why = self._can_enter(agent, target_loc) if target_loc else (True, "")
+            moved = bool(target_loc) and allowed and self.environment.move_agent(
                 agent.id, agent.location, action.target
             )
             if not moved:
-                why = "it is full" if target_loc else "that place does not exist"
+                why = why or ("it is full" if target_loc else "that place does not exist")
                 agent.observe(f"I tried to go to {action.target} but couldn't: {why}.", tick, importance=0.5)
                 action = Action(type=ActionType.WAIT,
                                 reasoning=f"Could not move to {action.target}: {why}. {action.reasoning}".strip())
@@ -332,6 +350,7 @@ class SimulationEngine(ConditionsMixin):
         agent.apply_action(action, tick)
         if action.type == ActionType.WORK:
             await self._produce(agent, tick)
+        await self._satisfy_by_action(agent, action, tick)
         if self.config.conditions and action.target and action.type in (
                 ActionType.SPEAK, ActionType.INTERACT, ActionType.GIVE, ActionType.TRADE,
                 ActionType.ACCEPT, ActionType.USE, ActionType.CUSTOM):
@@ -412,6 +431,9 @@ class SimulationEngine(ConditionsMixin):
                 observation += f"\n- {o.describe(self.agents[o.seller].name, 'you')}"
         if self.config.conditions or self.config.actions:
             extra = self._conditions_prompt(agent)
+            if extra:
+                observation += "\n" + extra
+        for extra in (self._needs_prompt(agent), self._places_prompt()):
             if extra:
                 observation += "\n" + extra
         guide = self._item_guide(set(agent.state.resources) | set(stock))
@@ -512,6 +534,24 @@ class SimulationEngine(ConditionsMixin):
                         await self.kill(agent, tick, cause)
         for spec, changes in effects.items.items():
             await self._apply_item_effect(spec, changes, tick, cause)
+        if effects.adjust:
+            state = self.environment.global_state
+            for key, delta in effects.adjust.items():
+                try:
+                    state[key] = round(float(state.get(key, 0) or 0) + delta, 6)
+                except (TypeError, ValueError):
+                    logger.warning(f"Can't adjust non-numeric world variable '{key}'")
+            await self.event_bus.emit(SimEvent(
+                type=EventType.ENVIRONMENT_CHANGE, tick=tick,
+                data={"global_state": {k: state.get(k) for k in effects.adjust}, "cause": cause},
+            ))
+        for name, change in effects.locations.items():
+            await self._change_place(name, change, tick, cause)
+        for spec, changes in effects.needs.items():
+            for agent in self._resolve_targets(spec):
+                for name, delta in changes.items():
+                    if name in self.config.needs:
+                        await self._set_need(agent, name, agent.state.needs.get(name, 0.0) + delta, tick, cause)
         for spec, names in effects.remove_condition.items():
             for agent in self._resolve_targets(spec):
                 for name in names:
@@ -530,6 +570,8 @@ class SimulationEngine(ConditionsMixin):
             for i in range(spawn.count):
                 name = f"{spawn.name} {i + 1}" if spawn.count > 1 else spawn.name
                 await self._spawn(spawn, tick, cause, name=name)
+        if effects.end:
+            self.request_end("rule", effects.end)
 
     def _witnesses(self, agent: Agent) -> list[Agent]:
         return [a for a in self.living_agents if a.id != agent.id and a.location == agent.location]
@@ -686,6 +728,7 @@ class SimulationEngine(ConditionsMixin):
                 setattr(on.state, key, max(low, min(1.0, getattr(on.state, key) + delta)))
             for name in spec.cures:
                 await self.remove_condition(on, name, tick, f"{item} from {agent.name}")
+            await self._satisfy_by_item(on, item, tick)
             if on is not agent:
                 on.observe(f"{agent.name} used {item} on me.", tick, importance=0.7)
                 on.memory.update_relationship(agent.name, 0.1, tick, f"used {item} on me")
@@ -832,6 +875,7 @@ class SimulationEngine(ConditionsMixin):
                 name: {"description": a.description, "target": a.target}
                 for name, a in self.config.actions.items()
             },
+            "needs": {name: {"label": n.label} for name, n in self.config.needs.items()},
             "offers": [
                 {"from": self.agents[o.seller].name, "to": self.agents[o.buyer].name, "item": o.item,
                  "amount": o.amount, "ask_item": o.ask_item, "ask_amount": o.ask_amount, "expires": o.expires}

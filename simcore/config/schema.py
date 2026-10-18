@@ -30,6 +30,8 @@ class AgentConfig(BaseModel):
     arrives_at: int = Field(0, ge=0)
     # Conditions (scenario `conditions`) the agent starts with, e.g. [infected].
     conditions: list[str] = Field(default_factory=list)
+    # Initial level of scenario needs, 0..1 (e.g. {hunger: 0.3}).
+    needs: dict[str, float] = Field(default_factory=dict)
 
 
 class SpawnConfig(AgentConfig):
@@ -142,6 +144,116 @@ class ConditionConfig(BaseModel):
         return value
 
 
+class HazardConfig(BaseModel):
+    label: str = ""  # "on fire", "flooded"
+    per_tick: dict[str, float] = Field(default_factory=dict)  # health / energy / mood
+    condition: str = ""  # added to whoever is here
+
+
+class NeedSatisfy(BaseModel):
+    items: list[str] = Field(default_factory=list)  # using one of these items
+    actions: list[str] = Field(default_factory=list)  # doing one of these actions (rest, work, a scenario action)
+    places: list[str] = Field(default_factory=list)  # ...there (with no actions: resting or working there)
+
+
+class NeedConfig(BaseModel):
+    """Something that grows by itself and pushes agents to act: hunger, sleep, fear…"""
+
+    label: str = ""
+    grows: float = Field(0.03, ge=0.0, le=1.0)  # per tick
+    relief: float = Field(0.5, ge=0.0, le=1.0)  # how much satisfying it lowers it
+    satisfied_by: NeedSatisfy = Field(default_factory=NeedSatisfy)
+    at_max: dict[str, float] = Field(default_factory=dict)  # per tick once it reaches 1
+    who: Requirement = Field(default_factory=Requirement)  # who has this need
+
+    @field_validator("at_max")
+    @classmethod
+    def _check_at_max(cls, value: dict[str, float]) -> dict[str, float]:
+        if set(value) - set(USE_KEYS):
+            raise ValueError(f"at_max only accepts {', '.join(USE_KEYS)}")
+        return value
+
+
+class Compare(BaseModel):
+    lt: float | None = None
+    lte: float | None = None
+    gt: float | None = None
+    gte: float | None = None
+    eq: float | str | bool | None = None
+    ne: float | str | bool | None = None
+
+    def test(self, value: object) -> bool:
+        def num(v: object) -> float | None:
+            if isinstance(v, bool):
+                return float(v)
+            if isinstance(v, (int, float)):
+                return float(v)
+            try:
+                return float(str(v))
+            except (TypeError, ValueError):
+                return None
+
+        n = num(value)
+        for bound, ok in ((self.lt, lambda a, b: a < b), (self.lte, lambda a, b: a <= b),
+                          (self.gt, lambda a, b: a > b), (self.gte, lambda a, b: a >= b)):
+            if bound is not None and (n is None or not ok(n, bound)):
+                return False
+        if self.eq is not None and not _same(value, self.eq):
+            return False
+        if self.ne is not None and _same(value, self.ne):
+            return False
+        return True
+
+
+def _same(a: object, b: object) -> bool:
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool):
+        return float(a) == float(b)
+    return str(a).lower() == str(b).lower()
+
+
+class CountSpec(Compare):
+    """How many living agents (optionally with / without a condition, or in a place)."""
+
+    condition: str = ""
+    not_condition: str = ""
+    location: str = ""
+
+
+class PlaceSpec(BaseModel):
+    closed: bool | None = None
+    hazard: bool | None = None
+    occupants: Compare | None = None
+
+
+class RuleWhen(BaseModel):
+    model_config = {"populate_by_name": True}
+
+    at: int | None = Field(None, ge=0)
+    every: int | None = Field(None, ge=1)
+    from_tick: int | None = Field(None, alias="from", ge=0)
+    until: int | None = Field(None, ge=0)
+    global_state: dict[str, Compare] = Field(default_factory=dict, alias="global")
+    alive: Compare | None = None
+    count: CountSpec | None = None
+    place: dict[str, PlaceSpec] = Field(default_factory=dict)
+
+
+class RuleConfig(BaseModel):
+    """When something is true, apply effects (the event `effects` language) or end the run."""
+
+    description: str = ""
+    when: RuleWhen = Field(default_factory=RuleWhen)
+    then: dict[str, object] = Field(default_factory=dict)
+    once: bool = False
+
+    @field_validator("then")
+    @classmethod
+    def _check_then(cls, value: dict[str, object]) -> dict[str, object]:
+        from simcore.engine.effects import parse_effects
+        parse_effects(value)
+        return value
+
+
 def _non_negative(value: dict[str, float]) -> dict[str, float]:
     bad = [k for k, v in value.items() if v < 0]
     if bad:
@@ -161,6 +273,11 @@ class LocationConfig(BaseModel):
     stock: dict[str, float] = Field(default_factory=dict)
     # Items added to the inventory of whoever works here, per work action.
     produces: dict[str, float] = Field(default_factory=dict)
+    # Nobody can come in while closed; `access` limits who can (conditions, professions, items).
+    closed: bool = False
+    access: Requirement | None = None
+    # Something dangerous here (fire, gas, radiation): hurts or adds a condition every tick.
+    hazard: HazardConfig | None = None
 
     @field_validator("stock", "produces")
     @classmethod
@@ -227,6 +344,9 @@ class SimulationConfig(BaseModel):
     # Optional states (infected, zombie…) and scenario-specific actions (bite, shoot…).
     conditions: dict[str, ConditionConfig] = Field(default_factory=dict)
     actions: dict[str, ActionConfig] = Field(default_factory=dict)
+    # Needs (hunger, sleep…) and world rules (when X → effects / end of the run).
+    needs: dict[str, NeedConfig] = Field(default_factory=dict)
+    rules: list[RuleConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _check_references(self) -> "SimulationConfig":
@@ -252,12 +372,47 @@ class SimulationConfig(BaseModel):
             for out in (act.on_target, act.on_self):
                 need(out.add_conditions + out.remove_conditions, f"action {name}")
         from simcore.engine.effects import parse_effects
-        for event in self.events.scheduled:
-            fx = parse_effects(event.effects)
+        places = {loc.name for loc in self.environment.locations}
+        needs = set(self.needs)
+
+        def check_effects(raw: dict, where: str) -> None:
+            fx = parse_effects(raw)
             for names in [*fx.add_condition.values(), *fx.remove_condition.values()]:
-                need(names, f"event at tick {event.tick}")
+                need(names, where)
             for spawn in fx.spawn:
-                need(spawn.conditions, f"event at tick {event.tick}")
+                need(spawn.conditions, where)
+            for place, change in fx.locations.items():
+                if place not in places:
+                    problems.append(f"{where} changes unknown place '{place}'")
+                hazard = change.get("hazard") or {}
+                if hazard.get("condition"):
+                    need([hazard["condition"]], where)
+            for changes in fx.needs.values():
+                problems.extend(f"{where} uses unknown need '{n}'" for n in changes if n not in needs)
+
+        for event in self.events.scheduled:
+            check_effects(event.effects, f"event at tick {event.tick}")
+        for i, rule in enumerate(self.rules):
+            where = f"rule {i + 1}"
+            check_effects(rule.then, where)
+            if rule.when.count:
+                need([c for c in (rule.when.count.condition, rule.when.count.not_condition) if c], where)
+                if rule.when.count.location and rule.when.count.location not in places:
+                    problems.append(f"{where} counts in unknown place '{rule.when.count.location}'")
+            problems.extend(f"{where} checks unknown place '{p}'" for p in rule.when.place if p not in places)
+        for a in self.agents:
+            problems.extend(f"agent {a.name} has unknown need '{n}'" for n in a.needs if n not in needs)
+        for loc in self.environment.locations:
+            if loc.hazard and loc.hazard.condition:
+                need([loc.hazard.condition], f"place {loc.name}")
+            if loc.access:
+                need(loc.access.conditions + loc.access.not_conditions, f"place {loc.name}")
+        for name, nd in self.needs.items():
+            problems.extend(f"need {name} uses unknown place '{p}'" for p in nd.satisfied_by.places if p not in places)
+            known_actions = builtin | acts
+            problems.extend(f"need {name} uses unknown action '{x}'" for x in nd.satisfied_by.actions
+                            if x not in known_actions)
+            need(nd.who.conditions + nd.who.not_conditions, f"need {name}")
         for name, cond in self.conditions.items():
             if cond.becomes:
                 need([cond.becomes], f"condition {name}")

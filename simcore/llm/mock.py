@@ -32,6 +32,11 @@ class MockLLMProvider:
         is_creative = "curious" in system_prompt.lower()
         is_hardworker = "organized" in system_prompt.lower() or "disciplined" in system_prompt.lower()
 
+        # Pressing needs first (hunger, sleep…).
+        urgent = self._need_decision(user_prompt, location)
+        if urgent:
+            return urgent
+
         # Scenario actions (bite, shoot, barricade…) when available.
         special = self._special_decision(user_prompt, nearby)
         if special:
@@ -144,6 +149,33 @@ class MockLLMProvider:
             type=ActionType.WAIT,
             reasoning="Nothing interesting to do right now",
         )
+
+    def _need_decision(self, prompt: str, location: str) -> Action | None:
+        if "Your needs: " not in prompt or self._rng.random() > 0.6:
+            return None
+        line = prompt.split("Your needs: ", 1)[1].split("\n", 1)[0]
+        inventory = _items_after(prompt, "Your inventory: ")
+        closed = _names_after(prompt, "Closed places: ")
+        for relief in re.findall(r"relief: ([^)]*)\)", line):
+            for way in [w.strip() for w in relief.split(",")]:
+                m = re.match(r"use ([\w-]+)$", way)
+                if m and m.group(1) in inventory:
+                    return Action(type=ActionType.USE, item=m.group(1), reasoning=f"I need {m.group(1)}")
+                m = re.match(r"(?:(rest or work)|([\w-]+)) at (.+)$", way)
+                if m:
+                    places = [p for p in m.group(3).split("/") if p not in closed]
+                    if not places:
+                        continue
+                    if location in places:
+                        kind = ActionType.REST if (m.group(1) or m.group(2)) in ("rest or work", "rest") else ActionType.WORK
+                        if m.group(2) and m.group(2) not in ("rest", "work"):
+                            return Action(type=ActionType.CUSTOM, parameters={"name": m.group(2)},
+                                          reasoning="I can't hold on any longer")
+                        return Action(type=kind, content="taking care of myself", reasoning="I really need this")
+                    return Action(type=ActionType.MOVE, target=self._rng.choice(places), reasoning="I need to sort myself out")
+                if way == "rest":
+                    return Action(type=ActionType.REST, reasoning="I'm exhausted")
+        return None
 
     def _special_decision(self, prompt: str, nearby: list[str]) -> Action | None:
         if "Special actions you can do now" not in prompt or self._rng.random() > 0.3:

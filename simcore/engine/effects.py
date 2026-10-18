@@ -11,6 +11,10 @@ An event's ``effects`` mapping mixes two kinds of keys:
       items: {"location:Clinic": {medicine: 10}, "Tomás": {food: -2}}
       add_condition: {"Tomás": infected}             # scenario conditions
       remove_condition: {"all": [panicked]}
+      needs: {"Ana": {hunger: -0.5}}                  # scenario needs
+      locations: {"Church": {closed: true, hazard: {label: on fire, per_tick: {health: -0.1}}}}
+      adjust: {oxygen: -0.1}                          # add to numeric world variables
+      end: "The colony has fallen"                    # ends the run
       spawn:                         # new agents arrive
         - {name: "Rescue worker", profession: "paramedic",
            starting_location: "Plaza", count: 2}
@@ -29,7 +33,8 @@ from typing import Any
 from simcore.config.schema import SpawnConfig
 
 RESERVED_KEYS = frozenset({"health", "kill", "depart", "spawn", "items", "add_condition",
-                           "remove_condition"})
+                           "remove_condition", "needs", "locations", "adjust", "end"})
+LOCATION_KEYS = frozenset({"closed", "hazard", "access"})
 LOCATION_PREFIX = "location:"
 ALL = "all"
 
@@ -46,11 +51,17 @@ class Effects:
     # target → condition names
     add_condition: dict[str, list[str]] = field(default_factory=dict)
     remove_condition: dict[str, list[str]] = field(default_factory=dict)
+    needs: dict[str, dict[str, float]] = field(default_factory=dict)
+    # location name → {closed, hazard (dict or None to remove), access (dict or None)}
+    locations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    adjust: dict[str, float] = field(default_factory=dict)
+    end: str = ""
 
     @property
     def empty(self) -> bool:
         return not (self.global_updates or self.health or self.kill or self.depart or self.spawn
-                    or self.items or self.add_condition or self.remove_condition)
+                    or self.items or self.add_condition or self.remove_condition or self.needs
+                    or self.locations or self.adjust or self.end)
 
 
 def _targets(value: Any, key: str) -> list[str]:
@@ -94,6 +105,37 @@ def parse_effects(raw: dict[str, Any] | None) -> Effects:
                 ):
                     raise ValueError(f"effects.items.{target} must map item names to numbers")
                 out.items[str(target)] = {str(k): float(n) for k, n in changes.items()}
+        elif key == "needs":
+            if not isinstance(value, dict) or not all(isinstance(v, dict) for v in value.values()):
+                raise ValueError("effects.needs must map targets to needs, e.g. {Ana: {hunger: -0.5}}")
+            for target, changes in value.items():
+                if not all(isinstance(n, (int, float)) and not isinstance(n, bool) for n in changes.values()):
+                    raise ValueError(f"effects.needs.{target} must map need names to numbers")
+                out.needs[str(target)] = {str(k): float(n) for k, n in changes.items()}
+        elif key == "locations":
+            if not isinstance(value, dict) or not all(isinstance(v, dict) for v in value.values()):
+                raise ValueError("effects.locations must map place names to changes, e.g. {Church: {closed: true}}")
+            from simcore.config.schema import HazardConfig, Requirement
+            for place, change in value.items():
+                unknown = set(change) - LOCATION_KEYS
+                if unknown:
+                    raise ValueError(f"effects.locations.{place} only accepts {', '.join(sorted(LOCATION_KEYS))}")
+                if "closed" in change and not isinstance(change["closed"], bool):
+                    raise ValueError(f"effects.locations.{place}.closed must be true or false")
+                if change.get("hazard") is not None:
+                    HazardConfig.model_validate(change["hazard"])
+                if change.get("access") is not None:
+                    Requirement.model_validate(change["access"])
+                out.locations[str(place)] = dict(change)
+        elif key == "adjust":
+            if not isinstance(value, dict) or not all(
+                    isinstance(n, (int, float)) and not isinstance(n, bool) for n in value.values()):
+                raise ValueError("effects.adjust must map world variables to numbers, e.g. {oxygen: -0.1}")
+            out.adjust = {str(k): float(n) for k, n in value.items()}
+        elif key == "end":
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError("effects.end must be the text explaining why the run ends")
+            out.end = value.strip()
         elif key in ("add_condition", "remove_condition"):
             if not isinstance(value, dict):
                 raise ValueError(f"effects.{key} must map targets to conditions, e.g. {{Ana: infected}}")

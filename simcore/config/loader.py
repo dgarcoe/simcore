@@ -31,5 +31,7 @@ def load_config(path: str | Path) -> SimulationConfig:
     sim_data["items"] = raw.get("items", {})
     sim_data["conditions"] = raw.get("conditions", {})
     sim_data["actions"] = raw.get("actions", {})
+    sim_data["needs"] = raw.get("needs", {})
+    sim_data["rules"] = raw.get("rules", [])
 
     return SimulationConfig(**sim_data)

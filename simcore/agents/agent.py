@@ -23,6 +23,8 @@ class AgentState:
     status: str = "alive"  # alive | dead | departed
     # Scenario conditions → ticks left (None = until something removes it).
     conditions: dict[str, int | None] = field(default_factory=dict)
+    # Scenario needs → level 0..1 (hunger, sleep…).
+    needs: dict[str, float] = field(default_factory=dict)
 
 
 class Agent:
@@ -216,6 +218,7 @@ Target rules (strict):
                 "health": self.state.health,
                 "status": self.state.status,
                 "conditions": dict(self.state.conditions),
+                "needs": {k: round(v, 3) for k, v in self.state.needs.items()},
                 "location": self.state.location,
                 "current_action": self.state.current_action.describe() if self.state.current_action else None,
                 "resources": self.state.resources,
