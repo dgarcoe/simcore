@@ -15,6 +15,7 @@ An event's ``effects`` mapping mixes two kinds of keys:
       locations: {"Church": {closed: true, hazard: {label: on fire, per_tick: {health: -0.1}}}}
       adjust: {oxygen: -0.1}                          # add to numeric world variables
       end: "The colony has fallen"                    # ends the run
+      rumor: {"Lucía": "The hunter brought the beast", "all": {text: "...", true: false}}
       spawn:                         # new agents arrive
         - {name: "Rescue worker", profession: "paramedic",
            starting_location: "Plaza", count: 2}
@@ -33,7 +34,7 @@ from typing import Any
 from simcore.config.schema import SpawnConfig
 
 RESERVED_KEYS = frozenset({"health", "kill", "depart", "spawn", "items", "add_condition",
-                           "remove_condition", "needs", "locations", "adjust", "end"})
+                           "remove_condition", "needs", "locations", "adjust", "end", "rumor"})
 LOCATION_KEYS = frozenset({"closed", "hazard", "access"})
 LOCATION_PREFIX = "location:"
 ALL = "all"
@@ -56,12 +57,14 @@ class Effects:
     locations: dict[str, dict[str, Any]] = field(default_factory=dict)
     adjust: dict[str, float] = field(default_factory=dict)
     end: str = ""
+    # target → (text, truth) told to them as a rumor
+    rumor: dict[str, tuple[str, bool | None]] = field(default_factory=dict)
 
     @property
     def empty(self) -> bool:
         return not (self.global_updates or self.health or self.kill or self.depart or self.spawn
                     or self.items or self.add_condition or self.remove_condition or self.needs
-                    or self.locations or self.adjust or self.end)
+                    or self.locations or self.adjust or self.end or self.rumor)
 
 
 def _targets(value: Any, key: str) -> list[str]:
@@ -132,6 +135,19 @@ def parse_effects(raw: dict[str, Any] | None) -> Effects:
                     isinstance(n, (int, float)) and not isinstance(n, bool) for n in value.values()):
                 raise ValueError("effects.adjust must map world variables to numbers, e.g. {oxygen: -0.1}")
             out.adjust = {str(k): float(n) for k, n in value.items()}
+        elif key == "rumor":
+            if not isinstance(value, dict):
+                raise ValueError("effects.rumor must map targets to a text, e.g. {Ana: \"The well is poisoned\"}")
+            for target, r in value.items():
+                if isinstance(r, str) and r.strip():
+                    out.rumor[str(target)] = (r.strip(), None)
+                elif isinstance(r, dict) and isinstance(r.get("text"), str) and r["text"].strip():
+                    truth = r.get("true")
+                    if truth is not None and not isinstance(truth, bool):
+                        raise ValueError(f"effects.rumor.{target}.true must be true or false")
+                    out.rumor[str(target)] = (r["text"].strip(), truth)
+                else:
+                    raise ValueError(f"effects.rumor.{target} must be a text or {{text, true}}")
         elif key == "end":
             if not isinstance(value, str) or not value.strip():
                 raise ValueError("effects.end must be the text explaining why the run ends")

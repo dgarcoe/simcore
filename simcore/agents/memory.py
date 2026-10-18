@@ -29,6 +29,7 @@ class Relationship:
     interactions: int = 0
     last_interaction_tick: int = 0
     notes: list[str] = field(default_factory=list)
+    kind: str = ""  # brother, partner, rival… (scenario relationships)
 
     def describe(self) -> str:
         if self.sentiment > 0.5:
@@ -41,6 +42,8 @@ class Relationship:
             tone = "unfriendly"
         else:
             tone = "hostile"
+        if self.kind:
+            return f"{self.agent_name}: your {self.kind} ({tone}, {self.interactions} interactions)"
         return f"{self.agent_name} ({tone}, {self.interactions} interactions)"
 
 

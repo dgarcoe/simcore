@@ -84,6 +84,7 @@ class ConditionsMixin:
             return False
         agent.state.conditions[name] = cond.duration
         if not silent:
+            self._wake(agent)
             text = cond.description or name
             agent.observe(f"Something changed in me: {text}{f' ({cause})' if cause else ''}.", tick, importance=0.9)
             await self._condition_event(agent, name, "added", tick, cause)
@@ -233,6 +234,8 @@ class ConditionsMixin:
         if success:
             if target:
                 await self._apply_outcome(target, act.on_target, tick, cause)
+                if act.on_target.health < 0 or act.on_target.kill:
+                    await self._on_harm(agent, target, tick, "attacked")
                 target.observe(f"{agent.name} did '{name}' to me.", tick, importance=0.9)
                 target.memory.update_relationship(agent.name, -0.1 if act.on_target.health < 0 else 0.05,
                                                   tick, name)

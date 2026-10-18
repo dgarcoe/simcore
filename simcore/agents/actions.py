@@ -49,6 +49,8 @@ class Action:
     amount: float = 1
     ask_item: str = ""  # trade: what is asked in return
     ask_amount: float = 1
+    share: str = ""  # speak / interact: a belief or secret told to the target (or a lie)
+    plan_step_done: bool = False  # the current step of the agent's plan is done
 
     def describe(self) -> str:
         """Human-readable description of the action."""

@@ -14,6 +14,7 @@ from simcore.agents.persona import Persona, PersonalityTraits
 from simcore.config.schema import AgentConfig, SimulationConfig
 from simcore.engine.clock import SimClock
 from simcore.engine.conditions import ConditionsMixin
+from simcore.engine.minds import MindsMixin
 from simcore.engine.world import WorldMixin
 from simcore.engine.effects import ALL, LOCATION_PREFIX, Effects, parse_effects
 from simcore.engine.events import EventBus, EventType, SimEvent
@@ -55,7 +56,7 @@ def _has(inv: dict[str, float], item: str, amount: float) -> bool:
     return bool(item) and inv.get(item, 0) + 1e-9 >= amount
 
 
-class SimulationEngine(ConditionsMixin, WorldMixin):
+class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -183,6 +184,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin):
                 agent.state.conditions[name] = cond.duration
         for name in self.config.needs:
             agent.state.needs[name] = max(0.0, min(1.0, float(agent_cfg.needs.get(name, 0.0))))
+        self._init_mind(agent, agent_cfg, self.clock.current_tick)
         self.agents[agent.id] = agent
         self.environment.place_agent(agent.id, start_loc)
         return agent
@@ -306,6 +308,11 @@ class SimulationEngine(ConditionsMixin, WorldMixin):
             action = self._rule_decision(agent, controller)
         else:
             observation = self._build_observation(agent, tick, lang)
+            if self.config.planning:
+                had = (agent.state.plan_tick, agent.state.plan_step)
+                await self._maybe_plan(agent, observation, tick, lang)
+                if (agent.state.plan_tick, agent.state.plan_step) != had:
+                    observation = self._build_observation(agent, tick, lang)
             agent.observe(observation, tick, importance=0.3)
             prompt = agent.build_prompt(observation, language=lang)
             persona_prompt = agent.persona.to_prompt()
@@ -351,6 +358,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin):
         if action.type == ActionType.WORK:
             await self._produce(agent, tick)
         await self._satisfy_by_action(agent, action, tick)
+        await self._after_action_minds(agent, action, tick)
         if self.config.conditions and action.target and action.type in (
                 ActionType.SPEAK, ActionType.INTERACT, ActionType.GIVE, ActionType.TRADE,
                 ActionType.ACCEPT, ActionType.USE, ActionType.CUSTOM):
@@ -433,7 +441,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin):
             extra = self._conditions_prompt(agent)
             if extra:
                 observation += "\n" + extra
-        for extra in (self._needs_prompt(agent), self._places_prompt()):
+        for extra in (self._needs_prompt(agent), self._places_prompt(), self._minds_prompt(agent)):
             if extra:
                 observation += "\n" + extra
         guide = self._item_guide(set(agent.state.resources) | set(stock))
@@ -477,6 +485,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin):
                 self.environment.log_event(tick, event_cfg.type, description)
                 for agent in self.living_agents:
                     agent.observe(f"World event: {description}", tick, importance=0.8)
+                    self._wake(agent)
                 await self.event_bus.emit(SimEvent(
                     type=EventType.SCHEDULED_EVENT, tick=tick,
                     data={"description": description, "effects": event_cfg.effects},
@@ -493,6 +502,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin):
             for agent in self.living_agents:
                 if not location or agent.location == location:
                     agent.observe(f"Breaking event: {description}", tick, importance=0.9)
+                    self._wake(agent)
 
             await self.event_bus.emit(SimEvent(
                 type=EventType.INJECTED_EVENT, tick=tick,
@@ -570,6 +580,9 @@ class SimulationEngine(ConditionsMixin, WorldMixin):
             for i in range(spawn.count):
                 name = f"{spawn.name} {i + 1}" if spawn.count > 1 else spawn.name
                 await self._spawn(spawn, tick, cause, name=name)
+        for spec, (text, truth) in effects.rumor.items():
+            for agent in self._resolve_targets(spec):
+                await self._learn(agent, text, "rumor", truth, tick)
         if effects.end:
             self.request_end("rule", effects.end)
 
@@ -590,8 +603,10 @@ class SimulationEngine(ConditionsMixin, WorldMixin):
         self.environment.log_event(tick, "death", text, location=agent.location, agents=[agent.name])
         for other in self._witnesses(agent):
             other.observe(f"I saw {agent.name} die here.", tick, importance=0.95)
-            other.state.mood = max(-1.0, other.state.mood - 0.2)
+            other.state.mood = max(-1.0, other.state.mood - 0.2 - self._witness_grief(other, agent))
+            self._wake(other)
             other.memory.update_relationship(agent.name, 0.0, tick, "died")
+        await self._grieve(agent, tick, cause)
         await self.event_bus.emit(SimEvent(
             type=EventType.AGENT_DEATH, tick=tick,
             data={"agent": agent.name, "id": agent.id, "location": agent.location, "cause": cause},

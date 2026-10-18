@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Any
 
 import litellm
@@ -13,6 +14,22 @@ from simcore.agents.actions import Action, ActionType
 from simcore.llm.cache import ResponseCache
 
 logger = logging.getLogger("simcore.llm")
+
+
+def parse_plan(text: str) -> list[str]:
+    """Steps from {"steps": [...]}, a JSON list, or numbered / bulleted lines."""
+    text = text.strip()
+    match = re.search(r"\{.*\}|\[.*\]", text, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            steps = data.get("steps", []) if isinstance(data, dict) else data
+            if isinstance(steps, list):
+                return [str(s).strip() for s in steps if str(s).strip()][:5]
+        except json.JSONDecodeError:
+            pass
+    lines = [re.sub(r"^\s*(\d+[.)]|[-*•])\s*", "", line).strip() for line in text.splitlines()]
+    return [line for line in lines if line][:5]
 
 
 def _amount(value) -> float:
@@ -314,6 +331,29 @@ class LLMProvider:
             logger.warning(f"Narrative generation failed: {e}")
             raise
 
+    async def plan(self, persona: str, situation: str, language: str = "en") -> list[str]:
+        """A short plan (3-4 steps) for the next hours, from the agent's point of view."""
+        from simcore.llm.prompts import language_directive
+        self._call_count += 1
+        try:
+            response = await litellm.acompletion(
+                model=self.reflection_model,
+                messages=[
+                    {"role": "system", "content": f"{persona}\n\n{language_directive(language)}"},
+                    {"role": "user", "content": (
+                        f"{situation}\n\nWrite your plan for the next hours: 3 or 4 short, concrete steps "
+                        "(places, people, things to do), in order. Respond ONLY with JSON: "
+                        '{"steps": ["...", "..."]}\n\n' + language_directive(language)
+                    )},
+                ],
+                temperature=self.temperature,
+                max_tokens=250,
+            )
+            return parse_plan(response.choices[0].message.content or "")
+        except Exception as e:
+            logger.warning(f"Plan failed: {e}")
+            return []
+
     async def reflect(self, memories: str, language: str = "en") -> str:
         """Generate a reflection summary from recent memories."""
         from simcore.llm.prompts import language_directive
@@ -382,6 +422,8 @@ class LLMProvider:
                 amount=_amount(field("amount", 1)),
                 ask_item=str(field("ask_item")).strip(),
                 ask_amount=_amount(field("ask_amount", 1)),
+                share=str(field("share")).strip(),
+                plan_step_done=field("plan_step_done", False) in (True, "true", "yes", 1),
             )
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"Failed to parse action: {e}. Content: {content[:200]}")

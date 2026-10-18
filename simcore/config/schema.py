@@ -32,6 +32,21 @@ class AgentConfig(BaseModel):
     conditions: list[str] = Field(default_factory=list)
     # Initial level of scenario needs, 0..1 (e.g. {hunger: 0.3}).
     needs: dict[str, float] = Field(default_factory=dict)
+    # Typed relationships with other agents: {Tomás: {type: brother, sentiment: 0.6}}.
+    relationships: dict[str, RelationshipConfig] = Field(default_factory=dict)
+    # Things the agent believes (maybe wrongly) and true things it keeps to itself.
+    beliefs: list[BeliefConfig | str] = Field(default_factory=list)
+    secrets: list[str] = Field(default_factory=list)
+
+
+class RelationshipConfig(BaseModel):
+    type: str = ""  # brother, partner, friend, rival, boss… (free text)
+    sentiment: float = Field(0.0, ge=-1.0, le=1.0)
+
+
+class BeliefConfig(BaseModel):
+    text: str
+    true: bool | None = None  # ground truth, for the UI; agents never see it
 
 
 class SpawnConfig(AgentConfig):
@@ -335,6 +350,9 @@ class SimulationConfig(BaseModel):
     # Language that agents should use when speaking/writing content.
     # ISO 639-1 code (e.g. "en", "pt", "es"). Can be overridden at runtime.
     language: str = "en"
+    # Daily plans: every plan_every ticks each LLM agent writes a short plan (extra LLM calls).
+    planning: bool = False
+    plan_every: int = Field(8, ge=1)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     environment: EnvironmentConfig = Field(default_factory=EnvironmentConfig)
     agents: list[AgentConfig] = Field(default_factory=list)
@@ -400,8 +418,11 @@ class SimulationConfig(BaseModel):
                 if rule.when.count.location and rule.when.count.location not in places:
                     problems.append(f"{where} counts in unknown place '{rule.when.count.location}'")
             problems.extend(f"{where} checks unknown place '{p}'" for p in rule.when.place if p not in places)
+        names = {a.name for a in self.agents}
         for a in self.agents:
             problems.extend(f"agent {a.name} has unknown need '{n}'" for n in a.needs if n not in needs)
+            problems.extend(f"agent {a.name} has a relationship with unknown agent '{n}'"
+                            for n in a.relationships if n not in names)
         for loc in self.environment.locations:
             if loc.hazard and loc.hazard.condition:
                 need([loc.hazard.condition], f"place {loc.name}")

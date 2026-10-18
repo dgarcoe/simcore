@@ -74,12 +74,24 @@ class MockLLMProvider:
                 f"The weather's been interesting lately.",
                 f"What are you working on?",
             ]
-            return Action(
+            action = Action(
                 type=ActionType.SPEAK,
                 target=target,
                 content=self._rng.choice(phrases),
                 reasoning=f"I want to socialize with {target}",
             )
+            # Pass on something heard (or, rarely, a secret).
+            heard = _list_after(user_prompt, "What you believe (not necessarily true):")
+            secrets = _list_after(user_prompt, "Your secrets (")
+            pick = self._rng.random()
+            if secrets and pick < 0.12:
+                action.share = self._rng.choice(secrets)
+                action.content = "I have to tell you something."
+            elif heard and pick < 0.45:
+                action.share = re.sub(r" \((told by [^)]*|a rumor going around)\)$", "", self._rng.choice(heard))
+                action.content = "Have you heard?"
+            action.plan_step_done = "Your plan for today" in user_prompt and self._rng.random() < 0.3
+            return action
 
         # Do business with nearby people (real exchanges of items are decided above)
         if has_people and nearby and roll < 0.65:
@@ -228,6 +240,17 @@ class MockLLMProvider:
                           reasoning=f"Let's see if I can exchange some {item}")
         return None
 
+    async def plan(self, persona: str, situation: str, language: str = "en") -> list[str]:
+        self._call_count += 1
+        places = list(self._known_locations) or ["the square"]
+        first, second = self._rng.sample(places, 2) if len(places) > 1 else (places[0], places[0])
+        return [
+            f"Go to {first} and see how things are",
+            "Talk to someone I trust about what is going on",
+            f"Get what I need at {second}",
+            "Rest before nightfall",
+        ]
+
     async def translate(self, text: str, language: str) -> str:
         return text  # demo mode — no translation
 
@@ -314,3 +337,15 @@ def _names_after(prompt: str, marker: str) -> list[str]:
         return []
     line = prompt[prompt.index(marker) + len(marker):].split("\n", 1)[0].rstrip(".")
     return [n.strip() for n in line.split(",") if n.strip()]
+
+
+def _list_after(prompt: str, marker: str) -> list[str]:
+    """The "- item" lines right after a marker line."""
+    if marker not in prompt:
+        return []
+    out = []
+    for line in prompt.split(marker, 1)[1].split("\n")[1:]:
+        if not line.startswith("- "):
+            break
+        out.append(line[2:].strip())
+    return out

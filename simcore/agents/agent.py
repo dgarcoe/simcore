@@ -25,6 +25,13 @@ class AgentState:
     conditions: dict[str, int | None] = field(default_factory=dict)
     # Scenario needs → level 0..1 (hunger, sleep…).
     needs: dict[str, float] = field(default_factory=dict)
+    # What the agent believes: {text, source, truth (True/False/None), secret, tick}.
+    beliefs: list[dict] = field(default_factory=list)
+    # Daily plan: steps, the current one, when it was made, and whether to redo it.
+    plan: list[str] = field(default_factory=list)
+    plan_step: int = 0
+    plan_tick: int = -1
+    replan: bool = False
 
 
 class Agent:
@@ -146,6 +153,8 @@ Decide your next action. Respond in this exact JSON format:
     "amount": 1,
     "ask_item": "<only for trade: what you want in return>",
     "ask_amount": 1,
+    "share": "<optional, with speak/interact: something you believe or a secret you decide to tell them>",
+    "plan_step_done": false,
     "reasoning": "<brief internal thought>"
 }}
 
@@ -199,6 +208,7 @@ Target rules (strict):
             name: rel.describe()
             for name, rel in self.memory.relationships.items()
         }
+        kinds = {name: rel.kind for name, rel in self.memory.relationships.items() if rel.kind}
         return {
             "id": self.id,
             "name": self.name,
@@ -219,10 +229,13 @@ Target rules (strict):
                 "status": self.state.status,
                 "conditions": dict(self.state.conditions),
                 "needs": {k: round(v, 3) for k, v in self.state.needs.items()},
+                "beliefs": list(self.state.beliefs),
+                "plan": {"steps": list(self.state.plan), "current": self.state.plan_step} if self.state.plan else None,
                 "location": self.state.location,
                 "current_action": self.state.current_action.describe() if self.state.current_action else None,
                 "resources": self.state.resources,
             },
             "relationships": relationships,
+            "relationship_kinds": kinds,
             "memory_summary": self.memory.get_context(max_entries=5),
         }

@@ -317,6 +317,44 @@ agents:
 - **State:** agents expose `needs`; places expose `closed`, `access` and `hazard`.
 - **Validation:** unknown needs, places, conditions or actions are rejected on load.
 
+### Plans, beliefs, secrets, rumors and typed relationships
+
+**Daily plans** (`simulation.planning: true`, every `plan_every` ticks; this costs an extra LLM
+call per plan):
+- Each LLM-driven agent writes a short plan and sees it in its prompt.
+- It marks steps done with `"plan_step_done": true`.
+- It replans after a world event, a death it witnesses or of someone close, a new condition, or
+  something it is told.
+
+**Beliefs and secrets:**
+- Agents start with `beliefs` (optionally `{text, true}`, the ground truth for UIs) and `secrets`.
+- When speaking, an agent can add `"share": "<something>"`. The listener stores it as a belief
+  told by the speaker: it inherits the truth when it matches what the speaker believes, and is
+  unknown when the speaker made it up.
+- Telling a secret is reported as such.
+- The `rumor` effect plants a belief in agents or places.
+
+**Typed relationships** (`relationships: {Tomás: {type: brother, sentiment: 0.7}}`) appear in
+the prompt. They also weigh on what happens:
+- family learns of a death even from afar and grieves hard; friends a bit; rivals not at all;
+- hurting someone turns their family against the attacker.
+
+```yaml
+simulation: {planning: true, plan_every: 8}
+agents:
+  - name: Lucía
+    relationships: {Tomás: {type: brother, sentiment: 0.7}}
+    beliefs: [{text: "The well is poisoned", true: false}]
+    secrets: ["I saw the beast last night"]
+events:
+  scheduled:
+    - {tick: 4, type: rumor, description: "A rumor at the inn",
+       effects: {rumor: {"location:Inn": {text: "The stranger brought the beast", true: false}}}}
+```
+
+- **New events:** `agent_plan`, `belief_shared`.
+- **State:** agents expose their beliefs, their plan and `relationship_kinds`.
+
 ---
 
 ## LLM Providers

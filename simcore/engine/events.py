@@ -36,6 +36,8 @@ class EventType(Enum):
     NEED_CHANGE = "need_change"
     PLACE_CHANGE = "place_change"
     RULE_FIRED = "rule_fired"
+    AGENT_PLAN = "agent_plan"
+    BELIEF_SHARED = "belief_shared"
 
 
 @dataclass
