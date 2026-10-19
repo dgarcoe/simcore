@@ -357,6 +357,18 @@ events:
 
 ---
 
+### Conversations
+
+- **Talking to several people:** `speak`/`interact` take one or more people: `"target": "Ana"`, `"Ana, Bob"`, `"Ana y Bob"` or `"everyone"`/`"todos"`. The line reaches whoever of them is present. The agent only waits if nobody is. Speech events carry `targets: [...]`.
+- **Everyone here hears it:** a `speak` line is overheard by everyone in the same place. `interact` stays private.
+- **What the prompt shows:**
+  - **Recent conversation here:** the last lines spoken in the place.
+  - **Waiting for your answer:** who has said something to the agent that it hasn't answered yet, and how many times. The agent can answer all of them in one turn.
+- **Conversations going in circles:**
+  - when an agent repeats itself, it gets a note telling it to act or say something new, and it replans;
+  - when it asks what someone here already asked, the note quotes that question and its answer.
+- **Name matching:** names are found ignoring accents, case and titles (`padre julian`, `Julián` → `Padre Julián`).
+
 ## LLM Providers
 
 SimCore uses [LiteLLM](https://github.com/BerriAI/litellm) — any provider it supports works here:

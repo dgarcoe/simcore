@@ -17,6 +17,20 @@ class MockLLMProvider:
         self._cache_hits = 0
         self._known_locations: list[str] = []
 
+    def _maybe_share(self, action: Action, user_prompt: str) -> Action:
+        """Pass on something heard (or, rarely, a secret) while talking."""
+        heard = _list_after(user_prompt, "What you believe (not necessarily true):")
+        secrets = _list_after(user_prompt, "Your secrets (")
+        pick = self._rng.random()
+        if secrets and pick < 0.12:
+            action.share = self._rng.choice(secrets)
+            action.content = "I have to tell you something."
+        elif heard and pick < 0.45:
+            action.share = re.sub(r" \((told by [^)]*|a rumor going around)\)$", "", self._rng.choice(heard))
+            action.content = "Have you heard?"
+        action.plan_step_done = "Your plan for today" in user_prompt and self._rng.random() < 0.3
+        return action
+
     async def decide(self, system_prompt: str, user_prompt: str) -> Action:
         self._call_count += 1
 
@@ -47,6 +61,16 @@ class MockLLMProvider:
         if item_action:
             return item_action
 
+        # Answer the people waiting for a reply, all at once.
+        waiting = [w.split(":", 1)[0] for w in _list_after(user_prompt, "Waiting for your answer:")]
+        waiting = [w for w in waiting if w in nearby]
+        if waiting and self._rng.random() < 0.7:
+            replies = ["Yes, I'll look into it.", "I don't know, honestly.", "Let's deal with it now.",
+                       "Good question — I'll tell you what I know.", "Not now, I'm busy."]
+            return self._maybe_share(Action(
+                type=ActionType.SPEAK, target=", ".join(waiting), content=self._rng.choice(replies),
+                reasoning="People are waiting for my answer"), user_prompt)
+
         # Decision logic
         roll = self._rng.random()
 
@@ -74,24 +98,15 @@ class MockLLMProvider:
                 f"The weather's been interesting lately.",
                 f"What are you working on?",
             ]
+            if len(nearby) > 1 and self._rng.random() < 0.15:
+                target = "everyone"
             action = Action(
                 type=ActionType.SPEAK,
                 target=target,
                 content=self._rng.choice(phrases),
                 reasoning=f"I want to socialize with {target}",
             )
-            # Pass on something heard (or, rarely, a secret).
-            heard = _list_after(user_prompt, "What you believe (not necessarily true):")
-            secrets = _list_after(user_prompt, "Your secrets (")
-            pick = self._rng.random()
-            if secrets and pick < 0.12:
-                action.share = self._rng.choice(secrets)
-                action.content = "I have to tell you something."
-            elif heard and pick < 0.45:
-                action.share = re.sub(r" \((told by [^)]*|a rumor going around)\)$", "", self._rng.choice(heard))
-                action.content = "Have you heard?"
-            action.plan_step_done = "Your plan for today" in user_prompt and self._rng.random() < 0.3
-            return action
+            return self._maybe_share(action, user_prompt)
 
         # Do business with nearby people (real exchanges of items are decided above)
         if has_people and nearby and roll < 0.65:

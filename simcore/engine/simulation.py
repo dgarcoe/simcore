@@ -14,6 +14,7 @@ from simcore.agents.persona import Persona, PersonalityTraits
 from simcore.config.schema import AgentConfig, SimulationConfig
 from simcore.engine.clock import SimClock
 from simcore.engine.conditions import ConditionsMixin
+from simcore.engine.conversations import ConversationsMixin
 from simcore.engine.minds import MindsMixin
 from simcore.engine.world import WorldMixin
 from simcore.engine.effects import ALL, LOCATION_PREFIX, Effects, parse_effects
@@ -56,7 +57,7 @@ def _has(inv: dict[str, float], item: str, amount: float) -> bool:
     return bool(item) and inv.get(item, 0) + 1e-9 >= amount
 
 
-class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
+class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -71,6 +72,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
         self.end_reason = ""
         self.end_message = ""
         self._fired_rules: set[int] = set()
+        self._init_conversations()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -290,8 +292,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
         # Resolve interactions
         for agent, action in zip(agent_list, decisions):
             if action and action.type in (ActionType.SPEAK, ActionType.INTERACT):
-                target = self._find_agent_by_name(action.target)
-                if target and target.alive and target.location == agent.location:
+                for target in self._addressees(agent, action):
                     result = self.interaction_resolver.resolve(agent, target, action, tick)
                     # Skip INTERACTION event for SPEAK — AGENT_SPEAK already
                     # emitted the same line, no need to duplicate.
@@ -364,11 +365,9 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
         elif action.type == ActionType.CUSTOM:
             action = await self._apply_custom_action(agent, action, tick)
         elif action.type in (ActionType.SPEAK, ActionType.INTERACT):
-            target = self._find_agent_by_name(action.target)
-            if target and target.state.status == "dead" and target.location == agent.location:
-                action = Action(type=ActionType.WAIT, reasoning=f"{target.name} is dead")
-            elif not target or not target.alive or target.id == agent.id or target.location != agent.location:
-                action = Action(type=ActionType.WAIT, reasoning="Target not present at this location")
+            action = self._check_speech(agent, action)
+            if action.type != ActionType.WAIT:
+                self._record_speech(agent, action, tick)
 
         agent.apply_action(action, tick)
         if action.type == ActionType.WORK:
@@ -378,8 +377,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
         if self.config.conditions and action.target and action.type in (
                 ActionType.SPEAK, ActionType.INTERACT, ActionType.GIVE, ActionType.TRADE,
                 ActionType.ACCEPT, ActionType.USE, ActionType.CUSTOM):
-            other = self._present(agent, action.target)
-            if other:
+            for other in self._addressees(agent, action):
                 await self._spread_by_interaction(agent, other, tick)
 
         # Emit event
@@ -398,6 +396,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
                 "action_type": action.type.value,
                 "target": action.target,
                 "content": action.content,
+                **({"targets": action.parameters["targets"]} if action.parameters.get("targets") else {}),
                 **({"item": action.item, "amount": action.amount} if action.item else {}),
                 **({"name": action.parameters.get("name"), "success": action.parameters.get("success", True)}
                    if action.type == ActionType.CUSTOM and action.parameters.get("name") else {}),
@@ -457,7 +456,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
             extra = self._conditions_prompt(agent)
             if extra:
                 observation += "\n" + extra
-        for extra in (self._needs_prompt(agent), self._places_prompt(), self._minds_prompt(agent)):
+        for extra in (self._needs_prompt(agent), self._places_prompt(), self._minds_prompt(agent),
+                      self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
         guide = self._item_guide(set(agent.state.resources) | set(stock))
@@ -880,7 +880,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin):
         for agent in self.agents.values():
             if agent.name.lower() == name_lower or agent.id == name_lower:
                 return agent
-        return None
+        return self._match_agent(name)
 
     def pause(self) -> None:
         self._paused = True

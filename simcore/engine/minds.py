@@ -143,8 +143,7 @@ class MindsMixin:
         self._advance_plan(agent, action)
         if action.share and action.type in (ActionType.SPEAK, ActionType.INTERACT, ActionType.TRADE,
                                             ActionType.GIVE):
-            other = self._present(agent, action.target)
-            if other:
+            for other in self._addressees(agent, action):
                 await self._share(agent, other, action.share, tick)
 
     # ── Relationships ──────────────────────────────────────────────────

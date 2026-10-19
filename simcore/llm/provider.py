@@ -414,7 +414,8 @@ class LLMProvider:
 
             return Action(
                 type=action_type,
-                target=str(field("target")),
+                target=", ".join(map(str, field("target"))) if isinstance(field("target"), list)
+                else str(field("target")),
                 content=str(field("content")),
                 reasoning=str(field("reasoning")),
                 parameters=params,

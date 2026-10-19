@@ -169,7 +169,10 @@ Item rules:
 
 Target rules (strict):
 - For "move": target MUST be the exact name of an available location (not a person).
-- For "speak", "trade", "interact", "give": target MUST be the exact name of a real person listed in "People here" above. NEVER a location name, shop name, building, or invented person. If "People here" is empty or "You are alone", you CANNOT speak/trade/interact — choose move, observe, work, or rest instead.
+- For "speak" and "interact": target is one or more people listed in "People here", e.g. "Ana" or "Ana, Bob", or "everyone" to address the whole room. Everyone here hears what you say with "speak" ("interact" is private).
+- For "trade", "give": target MUST be the exact name of a real person listed in "People here" above. NEVER a location name, shop name, building, or invented person. If "People here" is empty or "You are alone", you CANNOT speak/trade/interact — choose move, observe, work, or rest instead.
+- If several people are waiting for your answer, answer them all in one line (target "Ana, Bob").
+- Don't ask what someone here already asked or answered. If a conversation goes in circles, stop asking and act (move, work, give, use…) or say something new.
 - For "observe", "work", "rest", "wait": target can be empty or a brief noun (e.g., "surroundings").
 
 {language_directive(language)}"""
