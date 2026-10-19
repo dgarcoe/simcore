@@ -254,10 +254,9 @@ def create_app(engine: SimulationEngine | None = None,
 
     @app.delete("/api/scenarios/{scenario_id}")
     async def delete_scenario(scenario_id: str):
-        if scenario_id.startswith("builtin:"):
-            return {"error": "Cannot delete builtin scenarios"}
+        # For a built-in scenario this drops its edits and restores the original.
         deleted = _get_store().delete(scenario_id)
-        return {"deleted": deleted}
+        return {"deleted": deleted, **({"restored": deleted} if scenario_id.startswith("builtin:") else {})}
 
     @app.post("/api/scenarios/{scenario_id}/run")
     async def run_scenario(scenario_id: str, payload: dict = Body(default={})):

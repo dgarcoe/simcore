@@ -46,7 +46,14 @@ class ScenarioStore:
 
     def update(self, scenario_id: str, payload: dict) -> dict | None:
         if scenario_id.startswith("builtin:"):
-            return None
+            # Built-in YAMLs ship with the code: edits are kept as an override next to the
+            # user scenarios, which replaces the YAML until it is removed (restore).
+            folder = scenario_id.split(":", 1)[1]
+            if not (_BUILTIN_DIR / folder / "config.yaml").exists():
+                return None
+            with open(self._override_path(folder), "w", encoding="utf-8") as f:
+                json.dump({"id": scenario_id, "data": payload}, f, ensure_ascii=False, indent=2)
+            return self.get(scenario_id)
         safe_name = scenario_id.replace(":", "_")
         path = self.user_dir / f"{safe_name}.json"
         if not path.exists():
@@ -62,7 +69,12 @@ class ScenarioStore:
         return record
 
     def delete(self, scenario_id: str) -> bool:
+        """Delete a user scenario, or drop a built-in one's edits (restoring the original)."""
         if scenario_id.startswith("builtin:"):
+            path = self._override_path(scenario_id.split(":", 1)[1])
+            if path.exists():
+                path.unlink()
+                return True
             return False
         safe_name = scenario_id.replace(":", "_")
         path = self.user_dir / f"{safe_name}.json"
@@ -77,7 +89,7 @@ class ScenarioStore:
         scenario = self.get(scenario_id)
         if not scenario:
             raise ValueError(f"Scenario not found: {scenario_id}")
-        if scenario.get("builtin"):
+        if scenario.get("builtin") and not scenario.get("modified"):
             folder = scenario_id.split(":", 1)[1]
             yaml_path = _BUILTIN_DIR / folder / "config.yaml"
             return load_config(yaml_path)
@@ -86,6 +98,19 @@ class ScenarioStore:
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _override_path(self, folder: str) -> Path:
+        return self.user_dir / f"builtin_{folder}.json"
+
+    def _load_override(self, folder: str) -> dict | None:
+        path = self._override_path(folder)
+        if not path.exists():
+            return None
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f).get("data")
+        except Exception:
+            return None
 
     def _load_builtins(self) -> list[dict]:
         result = []
@@ -98,6 +123,16 @@ class ScenarioStore:
                 with open(yaml_path, encoding="utf-8") as f:
                     raw = _yaml.safe_load(f)
                 if not raw:
+                    continue
+                override = self._load_override(folder)
+                if override is not None:
+                    result.append({
+                        "id": f"builtin:{folder}",
+                        "builtin": True,
+                        "modified": True,
+                        "meta": _extract_meta(override, f"builtin:{folder}"),
+                        "data": override,
+                    })
                     continue
                 sim = raw.get("simulation", {})
                 result.append({
