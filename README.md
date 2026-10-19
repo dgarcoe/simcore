@@ -367,6 +367,7 @@ events:
 - **Conversations going in circles:**
   - when an agent repeats itself, it gets a note telling it to act or say something new, and it replans;
   - when it asks what someone here already asked, the note quotes that question and its answer.
+- **Being ignored:** if a listener has 2 turns to answer and does something else, the speaker learns it is being ignored. It gets a note ("don't insist: ask someone else, go somewhere else or act on your own"), it remembers it, the relationship drops a little and it replans. The engine emits `speech_ignored` (`agent`, `by`, `text`, `turns`).
 - **Name matching:** names are found ignoring accents, case and titles (`padre julian`, `Julián` → `Padre Julián`).
 
 ### Situational awareness and private talk

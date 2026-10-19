@@ -384,6 +384,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         if action.type == ActionType.MOVE and agent.location != origin:
             self._note_move(agent, origin, agent.location, tick)
         self._note_doing(agent, action, tick)
+        await self._check_ignored(agent, action, tick)
         if action.type == ActionType.WORK:
             await self._produce(agent, tick)
         await self._satisfy_by_action(agent, action, tick)

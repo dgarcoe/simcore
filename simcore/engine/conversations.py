@@ -10,6 +10,7 @@ from difflib import SequenceMatcher
 from typing import TYPE_CHECKING
 
 from simcore.agents.actions import Action, ActionType
+from simcore.engine.events import EventType, SimEvent
 
 if TYPE_CHECKING:
     from simcore.agents.agent import Agent
@@ -52,6 +53,7 @@ HEARD_TICKS = 3  # how far back "recent conversation here" goes
 INBOX_TICKS = 6  # an unanswered line is forgotten after this
 SIMILAR = 0.8  # difflib ratio from which two lines count as the same thing
 NOTE_TICKS = 3  # how long a "going in circles" note stays in the prompt
+IGNORED_TURNS = 2  # turns a listener lets pass without answering before the speaker gives up
 
 
 def norm_name(text: str) -> str:
@@ -171,12 +173,19 @@ class ConversationsMixin:
             box = self._inbox.setdefault(t.id, {})
             prev = box.get(agent.name)
             count = prev["count"] + 1 if prev and _similar(prev["text"], text) else 1
-            box[agent.name] = {"text": text, "count": count, "tick": tick}
+            box[agent.name] = {"text": text, "count": count, "tick": tick, "skipped": 0}
         if action.type == ActionType.WHISPER:
             for other in self.living_agents:
-                if other.id != agent.id and other not in targets and other.location == agent.location:
-                    other.observe(f"I saw {agent.name} whisper something to {', '.join(names)}.", tick,
-                                  importance=0.3)
+                if (
+                    other.id != agent.id
+                    and other not in targets
+                    and other.location == agent.location
+                ):
+                    other.observe(
+                        f"I saw {agent.name} whisper something to {', '.join(names)}.",
+                        tick,
+                        importance=0.3,
+                    )
         if public:
             to = ", ".join(names)
             for other in self.living_agents:
@@ -188,6 +197,47 @@ class ConversationsMixin:
                     other.observe(
                         f'I heard {agent.name} say to {to}: "{text}"', tick, importance=0.4
                     )
+
+    async def _check_ignored(self, agent: Agent, action: Action, tick: int) -> None:
+        """A listener who could answer and did something else is ignoring the speaker."""
+        box = self._inbox.get(agent.id)
+        if not box:
+            return
+        addressed = set(action.parameters.get("targets") or []) if action.parameters else set()
+        if action.target:
+            addressed.add(action.target)
+        for name, msg in list(box.items()):
+            speaker = self._present(agent, name)
+            if speaker is None or msg["tick"] >= tick or name in addressed:
+                continue  # gone, said this very tick, or answered
+            msg["skipped"] = msg.get("skipped", 0) + 1
+            if msg["skipped"] < IGNORED_TURNS:
+                continue
+            del box[name]
+            self._note(
+                speaker,
+                f'{agent.name} has ignored you {msg["skipped"]} times ("{msg["text"]}"). '
+                "Don't insist: "
+                "assume they won't answer and change course: ask someone else, go somewhere else "
+                "or act on your own.",
+                tick,
+            )
+            speaker.observe(f"{agent.name} is ignoring me.", tick, importance=0.6)
+            speaker.memory.update_relationship(agent.name, -0.05, tick, "ignored me")
+            self._wake(speaker)
+            await self.event_bus.emit(
+                SimEvent(
+                    type=EventType.SPEECH_IGNORED,
+                    tick=tick,
+                    data={
+                        "agent": speaker.name,
+                        "by": agent.name,
+                        "text": msg["text"],
+                        "turns": msg["skipped"],
+                    },
+                    source=agent.name,
+                )
+            )
 
     def _note(self, agent: Agent, text: str, tick: int) -> None:
         notes = [n for n in self._conv_notes.get(agent.id, []) if n[1] >= tick and n[0] != text]

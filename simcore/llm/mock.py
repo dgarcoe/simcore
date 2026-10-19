@@ -114,6 +114,10 @@ class MockLLMProvider:
                     reasoning=f"It's quiet here, I should go somewhere with more people",
                 )
 
+        # Don't keep talking to people who ignore us.
+        ignoring = set(re.findall(r"^Note: (.+?) has ignored you", user_prompt, re.MULTILINE))
+        nearby = [n for n in nearby if n not in ignoring]
+
         # Talk to nearby people
         if has_people and nearby and roll < 0.5:
             target = self._rng.choice(nearby)

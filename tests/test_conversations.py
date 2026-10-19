@@ -124,3 +124,30 @@ def test_demo_run_talks_to_several():
     speaks = [x for x in e.events if x.type == EventType.AGENT_SPEAK]
     assert speaks
     assert any(len(x.data.get("targets", [])) > 1 for x in speaks)
+
+
+def test_ignored_after_two_turns_without_answer():
+    e = make_engine()
+    say(e, "ana", "Bob", "Will you help me?", tick=1)
+    say(e, "bob", "Carla", "Nice weather", tick=1)  # same tick: Bob hadn't heard Ana yet
+    assert not [x for x in e.events if x.type == EventType.SPEECH_IGNORED]
+    say(e, "bob", "Carla", "Shall we go?", tick=2)
+    say(e, "bob", "Carla", "Let's go", tick=3)
+    ignored = [x for x in e.events if x.type == EventType.SPEECH_IGNORED]
+    assert len(ignored) == 1 and ignored[0].data == {
+        "agent": "Ana",
+        "by": "Bob",
+        "text": "Will you help me?",
+        "turns": 2,
+    }
+    p = prompt_of(e, "ana", 3)
+    assert "Bob has ignored you 2 times" in p and "change course" in p
+    assert "Waiting for your answer" not in prompt_of(e, "bob", 3)
+
+
+def test_answering_is_not_ignoring():
+    e = make_engine()
+    say(e, "ana", "Bob", "Will you help me?", tick=1)
+    say(e, "bob", "Carla", "One moment", tick=2)
+    say(e, "bob", "Ana, Carla", "Yes, both of you", tick=3)
+    assert not [x for x in e.events if x.type == EventType.SPEECH_IGNORED]
