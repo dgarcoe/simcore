@@ -253,3 +253,37 @@ def test_demo_run():
     kinds = {x.data.get("action_type") for x in e.events}
     assert kinds & {"heal", "vote", "join", "found_group", "attack"}
     assert "society" in e.get_state()
+
+
+def test_yaml_loader_keeps_society(tmp_path):
+    import yaml
+
+    from simcore.config.loader import load_config
+
+    raw = {"simulation": {"name": "Y", "duration": "4 hours"}, **{k: v for k, v in WORLD.items() if k not in ("name", "duration")}}
+    raw["society"] = {"spontaneous_groups": False}
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8")
+    cfg = load_config(path)
+    assert "Guardia" in cfg.factions and "cerrar" in cfg.votes and "médica" in cfg.routines
+    assert cfg.society.spontaneous_groups is False
+
+
+def test_vote_options_written_as_yaml_booleans():
+    import yaml
+
+    from simcore.config.schema import VoteConfig
+
+    raw = yaml.safe_load("question: ¿Sí?\noptions:\n  yes: {}\n  no: {depart: Bob}\n")
+    assert list(VoteConfig.model_validate(raw).options) == ["yes", "no"]
+
+
+def test_configured_vote_from_tick_and_once():
+    e = make_engine()
+    e.config.votes["cerrar"].from_tick = 3
+    assert act(e, "lola", 1, type=ActionType.CALL_VOTE, content="cerrar").type == ActionType.WAIT
+    act(e, "lola", 3, type=ActionType.CALL_VOTE, content="cerrar")
+    act(e, "bob", 3, type=ActionType.VOTE, content="no")
+    asyncio.run(e._society_tick(6))
+    assert "Matters you can put" not in e._build_observation(ag(e, "lola"), 6)
+    assert act(e, "lola", 6, type=ActionType.CALL_VOTE, content="cerrar").type == ActionType.WAIT

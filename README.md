@@ -385,6 +385,7 @@ events:
   - Attacks across groups make them rivals.
   - Effects `join`/`leave`, and rules can `count` by `faction`.
 - **Votes:** `call_vote` (a question and `options`) at the place the agent is; people there `vote`. Matters in `votes:` carry effects per outcome, e.g. `{question: "¿Cerramos la pensión?", options: {sí: {locations: {Pensión: {closed: true}}}, no: {}}}`.
+  A configured matter is decided once (`once: true`, a tie can be voted again) and can wait until a tick (`from: 51`). Quote `"no"`/`"yes"` keys in YAML, or they are read as booleans (handled anyway).
 
 **Tracked by the engine:**
 - **Reputation:** helping, giving and healing raise it; attacking someone who was no threat lowers it. Others see it as labels (respected / distrusted…).

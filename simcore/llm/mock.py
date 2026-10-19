@@ -46,7 +46,7 @@ class MockLLMProvider:
             return Action(type=ActionType.FOUND_GROUP, content=f"Los de {location}" if location else "Los nuestros",
                           goal="Cuidarnos entre nosotros", target=who, reasoning="We should stick together")
         matter = re.search(r"Matters you can put to a vote here \(.*?\): (.+?)(?:;|\.$)", prompt, re.MULTILINE)
-        if matter and roll < 0.06:
+        if matter and roll < 0.2:
             return Action(type=ActionType.CALL_VOTE, content=matter.group(1).strip(), reasoning="Let's decide together")
         hurt = [n for n in _names_after(prompt, "Visibly hurt or sick: ") if n in nearby]
         if hurt and '"heal" someone' in prompt and roll < 0.3:

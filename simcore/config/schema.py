@@ -186,6 +186,18 @@ class VoteConfig(BaseModel):
     question: str
     options: dict[str, dict[str, object]] = Field(default_factory=lambda: {"yes": {}, "no": {}})
     duration: int = Field(2, ge=1)  # ticks the vote stays open
+    from_tick: int = Field(0, alias="from", ge=0)  # can't be put to the vote before this tick
+    once: bool = True  # once decided (not a tie) it can't be voted again
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("options", mode="before")
+    @classmethod
+    def _yaml_bool_keys(cls, value):
+        # PyYAML reads unquoted yes/no/on/off keys as booleans
+        if isinstance(value, dict):
+            return {("yes" if k else "no") if isinstance(k, bool) else str(k): (v or {}) for k, v in value.items()}
+        return value
 
 
 class SocietyConfig(BaseModel):

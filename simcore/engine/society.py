@@ -102,6 +102,7 @@ class SocietyMixin:
         self._feelings: dict[str, tuple[str, str, int]] = {}  # name → (emotion, toward, tick)
         self._votes: list[dict] = []
         self._aggressors: dict[str, int] = {}  # name → last tick they attacked someone
+        self._decided: set[str] = set()  # configured votes already decided
         for name, f in self.config.factions.items():
             self._factions[name] = {
                 "goal": f.goal,
@@ -473,6 +474,8 @@ class SocietyMixin:
             "",
         )
         cfg = self.config.votes.get(key)
+        if cfg and not self._can_vote_on(key, tick):
+            return await self._refuse(agent, action, tick, "that matter can't be put to the vote now")
         question = cfg.question if cfg else asked
         options = (
             list(cfg.options)
@@ -512,6 +515,10 @@ class SocietyMixin:
             )
         )
         return action
+
+    def _can_vote_on(self, key: str, tick: int) -> bool:
+        cfg = self.config.votes[key]
+        return tick >= cfg.from_tick and key not in self._decided and not any(v["id"] == key for v in self._votes)
 
     async def _apply_vote(self, agent: Agent, action: Action, tick: int) -> Action:
         vote = next((v for v in self._votes if v["place"] == agent.location), None)
@@ -568,6 +575,8 @@ class SocietyMixin:
                 )
             )
             cfg = self.config.votes.get(vote["id"])
+            if cfg and winner and cfg.once:
+                self._decided.add(vote["id"])
             if cfg and winner and cfg.options.get(winner):
                 await self.apply_effects(parse_effects(cfg.options[winner]), tick, cause=outcome)
 
@@ -695,14 +704,15 @@ class SocietyMixin:
                     f'There is a vote here: "{vote["question"]}" (options: {", ".join(vote["options"])}). '
                     f'Vote with "vote" and content: your option.'
                 )
+        open_matters = [v.question for k, v in self.config.votes.items() if self._can_vote_on(k, tick)]
         if (
-            self.config.votes
+            open_matters
             and len(self._witnesses(agent)) >= 2
             and not any(v["place"] == agent.location for v in self._votes)
         ):
             lines.append(
                 'Matters you can put to a vote here ("call_vote", content: the matter): '
-                + "; ".join(v.question for v in self.config.votes.values())
+                + "; ".join(open_matters)
                 + "."
             )
 

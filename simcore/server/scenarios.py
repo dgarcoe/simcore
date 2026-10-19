@@ -202,4 +202,9 @@ def _dict_to_config(data: dict):
     sim_data["actions"] = data.get("actions", {})
     sim_data["needs"] = data.get("needs", {})
     sim_data["rules"] = data.get("rules", [])
+    sim_data["factions"] = data.get("factions", {})
+    sim_data["votes"] = data.get("votes", {})
+    sim_data["routines"] = data.get("routines", {})
+    if data.get("society"):
+        sim_data["society"] = data["society"]
     return SimulationConfig(**sim_data)

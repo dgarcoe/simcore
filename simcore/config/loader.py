@@ -33,5 +33,10 @@ def load_config(path: str | Path) -> SimulationConfig:
     sim_data["actions"] = raw.get("actions", {})
     sim_data["needs"] = raw.get("needs", {})
     sim_data["rules"] = raw.get("rules", [])
+    sim_data["factions"] = raw.get("factions", {})
+    sim_data["votes"] = raw.get("votes", {})
+    sim_data["routines"] = raw.get("routines", {})
+    if raw.get("society"):
+        sim_data["society"] = raw["society"]
 
     return SimulationConfig(**sim_data)
