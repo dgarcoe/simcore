@@ -249,7 +249,11 @@ class MockLLMProvider:
         if kind.startswith("target"):
             if not nearby:
                 return None
-            target = self._rng.choice(nearby)
+            # Prefer someone who visibly stands out (a zombie, someone bleeding…).
+            noticed = re.findall(r"(?:^You notice: |; )([^;(]+?) \(", prompt.split("You notice: ", 1)[1].split("\n", 1)[0]) \
+                if "You notice: " in prompt else []
+            noticed = [n.strip() for n in noticed if n.strip() in nearby]
+            target = self._rng.choice(noticed if noticed and self._rng.random() < 0.8 else nearby)
         return Action(type=ActionType.CUSTOM, target=target, parameters={"name": name},
                       reasoning=f"This is the moment to {name}")
 
