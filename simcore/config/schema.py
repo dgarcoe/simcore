@@ -376,6 +376,9 @@ class SimulationConfig(BaseModel):
     language: str = "en"
     # Daily plans: every plan_every ticks each LLM agent writes a short plan (extra LLM calls).
     planning: bool = False
+    # The narrator writes a short chapter every chapter_every ticks (one LLM call each).
+    story: bool = False
+    chapter_every: int = Field(24, ge=1)
     # What agents know of where the others are: "local" (what they saw) or "full" (everything).
     awareness: Literal["local", "full"] = "local"
     plan_every: int = Field(8, ge=1)

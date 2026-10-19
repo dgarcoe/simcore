@@ -18,6 +18,7 @@ from simcore.engine.conditions import ConditionsMixin
 from simcore.engine.conversations import ConversationsMixin
 from simcore.engine.minds import MindsMixin
 from simcore.engine.search import SearchMixin
+from simcore.engine.story import StoryMixin
 from simcore.engine.world import WorldMixin
 from simcore.engine.effects import ALL, LOCATION_PREFIX, Effects, parse_effects
 from simcore.engine.events import EventBus, EventType, SimEvent
@@ -60,7 +61,7 @@ def _has(inv: dict[str, float], item: str, amount: float) -> bool:
 
 
 class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin,
-                       SearchMixin):
+                       SearchMixin, StoryMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -78,6 +79,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_conversations()
         self._init_awareness()
         self._init_search()
+        self._init_story()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -236,6 +238,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 break
             finally:
                 self._tick_task = None
+            await self._story_after_tick(self.clock.current_tick)
 
             if not self.living_agents and not any(t > self.clock.current_tick for t in self._arrivals):
                 self.end_reason = "no_agents_left"
@@ -252,6 +255,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         if not self.end_reason:
             self.end_reason = "stopped" if not self._running else "completed"
         self._running = False
+        await self._story_at_end(self.clock.current_tick)
         await self.event_bus.emit(SimEvent(
             type=EventType.SIMULATION_END,
             tick=self.clock.current_tick,

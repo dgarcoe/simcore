@@ -146,6 +146,13 @@ def create_app(engine: SimulationEngine | None = None,
         server_state["engine"].config.language = lang
         return {"status": "ok", "language": lang}
 
+    @app.get("/api/story")
+    async def get_story():
+        engine = server_state["engine"]
+        if not engine:
+            return {"chapters": [], "moments": []}
+        return engine.story()
+
     @app.post("/api/postmortem/narrative")
     async def postmortem_narrative():
         engine = server_state["engine"]
@@ -172,8 +179,12 @@ def create_app(engine: SimulationEngine | None = None,
                 "relationships": [r.describe() for r in rels],
             })
 
+        story_moments = engine.story_summary(15)
         all_events = engine.event_bus.get_log(500)
         key_events = [
+            {"tick": m["tick"], "type": m["kind"], "source": ", ".join(m["agents"][:2]), "summary": m["text"][:160]}
+            for m in story_moments
+        ] or [
             {
                 "tick": e.get("tick", 0),
                 "type": e.get("type", ""),
@@ -190,7 +201,8 @@ def create_app(engine: SimulationEngine | None = None,
             if e.get("type") in ("interaction", "scheduled_event", "injected_event", "reflection")
         ][-15:]
 
-        data = {"ticks": ticks, "agents": agents_data, "key_events": key_events}
+        data = {"ticks": ticks, "agents": agents_data, "key_events": key_events,
+                "chapters": engine.story()["chapters"], "ending": engine.end_message}
         try:
             narrative = await engine.llm.generate_narrative(data, lang)
             return {"narrative": narrative}

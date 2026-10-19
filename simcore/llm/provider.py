@@ -400,6 +400,37 @@ class LLMProvider:
             logger.warning(f"Translation failed: {e}")
             return text
 
+    async def chronicle(self, moments: list[str], cast: list[str], previous: list[str],
+                        language: str = "en") -> tuple[str, str]:
+        """One chapter of the run's chronicle: (title, 2-4 sentences) from its key moments."""
+        from simcore.llm.prompts import language_directive
+
+        self._call_count += 1
+        system = (
+            "You are the narrator of a story told chapter by chapter. Write the next chapter from the "
+            "moments given: 2 to 4 vivid sentences, past tense, naming the people involved, plus a short "
+            'evocative title. Respond ONLY with JSON: {"title": "...", "text": "..."}\n\n'
+            f"{language_directive(language)}"
+        )
+        user = (
+            f"Characters: {'; '.join(cast)}\n"
+            + (f"Previous chapters: {'; '.join(previous)}\n" if previous else "")
+            + "Moments of this chapter:\n" + "\n".join(moments) + "\n\n" + language_directive(language)
+        )
+        response = await litellm.acompletion(
+            model=self.reflection_model,
+            messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            temperature=0.7,
+            max_tokens=350,
+            **self._json_mode(),
+        )
+        content = response.choices[0].message.content or ""
+        try:
+            data = _load_json_object(content)
+            return str(data.get("title", "")).strip(), str(data.get("text", "")).strip()
+        except (json.JSONDecodeError, ValueError):
+            return "", _strip_json_artifacts(content)
+
     async def generate_narrative(self, data: dict, language: str = "en") -> str:
         """Generate a post-mortem narrative paragraph from simulation summary data."""
         from simcore.llm.prompts import language_directive as lang_dir
@@ -418,6 +449,7 @@ class LLMProvider:
             for e in data.get("key_events", [])
             if e.get("summary")
         ]
+        chapters_lines = [f"Chapter {c['n']}: {c['title']} — {c['text']}" for c in data.get("chapters", [])]
 
         system = (
             "You are a journalist writing a vivid chronicle about a social simulation.\n\n"
@@ -431,7 +463,10 @@ class LLMProvider:
         user = (
             f"The simulation ran for {data.get('ticks', 0)} ticks.\n\n"
             f"Agent final states:\n" + "\n".join(agents_lines) + "\n\n"
+            + ("The story so far, chapter by chapter:\n" + "\n".join(chapters_lines) + "\n\n"
+               if chapters_lines else "")
             + (f"Notable events:\n" + "\n".join(events_lines) + "\n\n" if events_lines else "")
+            + (f"How it ended: {data['ending']}\n\n" if data.get("ending") else "")
             + "Write the chronicle now.\n\n"
             f"{lang_dir(language)}"
         )

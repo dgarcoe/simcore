@@ -353,8 +353,20 @@ class MockLLMProvider:
     async def translate(self, text: str, language: str) -> str:
         return text  # demo mode — no translation
 
+    async def chronicle(self, moments: list[str], cast: list[str], previous: list[str],
+                        language: str = "en") -> tuple[str, str]:
+        self._call_count += 1
+        texts = [re.sub(r"^\[t\d+\] ", "", m) for m in moments]
+        title = texts[-1].split(":")[0][:40] if texts else "A quiet day"
+        body = ". ".join(t.rstrip(".") for t in texts[:4]) + "." if texts else "Nothing worth telling happened."
+        return f"Chapter {len(previous) + 1}: {title}", body
+
     async def generate_narrative(self, data: dict, language: str = "en") -> str:
         self._call_count += 1
+        if data.get("chapters"):
+            arc = "; then ".join(c["title"].split(": ", 1)[-1] for c in data["chapters"])
+            ending = f" In the end: {data['ending']}" if data.get("ending") else ""
+            return f"It began quietly; then {arc}.{ending}"
         agents = data.get("agents", [])
         names = [a["name"] for a in agents]
         ticks = data.get("ticks", 0)

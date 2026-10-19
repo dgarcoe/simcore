@@ -40,6 +40,8 @@ class EventType(Enum):
     BELIEF_SHARED = "belief_shared"
     SPEECH_IGNORED = "speech_ignored"
     AGENT_SEARCH = "agent_search"
+    STORY_MOMENT = "story_moment"
+    STORY_CHAPTER = "story_chapter"
 
 
 @dataclass
