@@ -29,6 +29,15 @@ class ActionType(Enum):
     INVITE = "invite"
     FOLLOW = "follow"
     FIND = "find"  # look for someone who isn't here
+    # Society
+    ATTACK = "attack"
+    HEAL = "heal"
+    FOUND_GROUP = "found_group"
+    JOIN = "join"
+    LEAVE = "leave"
+    EXPEL = "expel"
+    CALL_VOTE = "call_vote"
+    VOTE = "vote"
 
 
 ITEM_ACTIONS = frozenset({
@@ -56,7 +65,10 @@ class Action:
     ask_amount: float = 1
     share: str = ""  # speak / interact: a belief or secret told to the target (or a lie)
     plan_step_done: bool = False
-    place: str = ""  # invite: where to meet  # the current step of the agent's plan is done
+    place: str = ""  # invite: where to meet
+    goal: str = ""  # found_group: what the group is for
+    options: list[str] = field(default_factory=list)  # call_vote: the choices
+    emotion: str = ""  # how the agent feels (optional)  # the current step of the agent's plan is done
 
     def describe(self) -> str:
         """Human-readable description of the action."""
@@ -92,6 +104,22 @@ class Action:
                 return f"follows {self.target}"
             case ActionType.FIND:
                 return f"looks for {self.target}"
+            case ActionType.ATTACK:
+                return f"attacks {self.target}"
+            case ActionType.HEAL:
+                return f"heals {self.target}" if self.target else "heals themself"
+            case ActionType.FOUND_GROUP:
+                return f'founds the group "{self.content}"'
+            case ActionType.JOIN:
+                return f"joins {self.target}"
+            case ActionType.LEAVE:
+                return f"leaves {self.target}" if self.target else "leaves their group"
+            case ActionType.EXPEL:
+                return f"expels {self.target}"
+            case ActionType.CALL_VOTE:
+                return f'calls a vote: "{self.content}"'
+            case ActionType.VOTE:
+                return f'votes "{self.content}"'
             case ActionType.INTERACT:
                 return f"interacts with {self.target}: {self.content}"
             case ActionType.WORK:

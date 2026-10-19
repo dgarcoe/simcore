@@ -22,6 +22,13 @@ ACTION_ALIASES = {
     "invitar": "invite", "convidar": "invite", "invite_to": "invite", "take_aside": "invite",
     "seguir": "follow", "follow_me": "follow", "follow_to": "follow",
     "buscar": "find", "search": "find", "look_for": "find", "find_person": "find", "procurar": "find",
+    "atacar": "attack", "matar": "attack", "golpear": "attack", "disparar": "attack", "kill": "attack",
+    "shoot": "attack", "hit": "attack", "fight": "attack", "pelear": "attack",
+    "curar": "heal", "sanar": "heal", "treat": "heal", "cure": "heal",
+    "fundar_grupo": "found_group", "crear_grupo": "found_group", "create_group": "found_group",
+    "form_group": "found_group", "unirse": "join", "join_group": "join", "salir": "leave",
+    "leave_group": "leave", "abandonar": "leave", "expulsar": "expel", "kick": "expel",
+    "votar": "vote", "convocar_votacion": "call_vote", "votacion": "call_vote", "start_vote": "call_vote",
 }
 
 
@@ -561,7 +568,10 @@ class LLMProvider:
         data = _load_json_object(content)
         raw_action = str(data.get("action", "wait")).strip()
         params = dict(data["parameters"]) if isinstance(data.get("parameters"), dict) else {}
-        raw_action = ACTION_ALIASES.get(raw_action.lower(), raw_action)
+        if raw_action.lower() in ACTION_ALIASES:
+            # kept: a scenario may define an action with this very name (the engine checks)
+            params["alias_of"] = raw_action.lower()
+            raw_action = ACTION_ALIASES[raw_action.lower()]
         try:
             action_type = ActionType(raw_action.lower())
         except ValueError:
@@ -588,6 +598,9 @@ class LLMProvider:
             ask_amount=_amount(field("ask_amount", 1)),
             share=str(field("share")).strip(),
             place=str(field("place")).strip(),
+            goal=str(field("goal")).strip(),
+            options=[str(o) for o in field("options", [])] if isinstance(field("options", []), list) else [],
+            emotion=str(field("emotion")).strip(),
             plan_step_done=field("plan_step_done", False) in (True, "true", "yes", 1),
         )
 

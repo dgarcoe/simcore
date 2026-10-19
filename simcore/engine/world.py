@@ -191,7 +191,8 @@ class WorldMixin:
             n = sum(1 for a in self.living_agents
                     if (not c.condition or c.condition in a.state.conditions)
                     and (not c.not_condition or c.not_condition not in a.state.conditions)
-                    and (not c.location or a.location == c.location))
+                    and (not c.location or a.location == c.location)
+                    and (not c.faction or self._faction_of(a.name) == c.faction))
             if not c.test(n):
                 return False
         for name, spec in w.place.items():

@@ -20,6 +20,7 @@ STATS = ("health", "energy", "mood")
 SPEECH_ACTIONS = frozenset({
     ActionType.SPEAK, ActionType.WHISPER, ActionType.INVITE, ActionType.INTERACT, ActionType.TRADE,
     ActionType.GIVE, ActionType.ACCEPT, ActionType.DECLINE, ActionType.POST,
+    ActionType.FOUND_GROUP, ActionType.JOIN, ActionType.EXPEL, ActionType.CALL_VOTE, ActionType.VOTE,
 })
 
 

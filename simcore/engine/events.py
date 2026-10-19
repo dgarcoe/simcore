@@ -42,6 +42,9 @@ class EventType(Enum):
     AGENT_SEARCH = "agent_search"
     STORY_MOMENT = "story_moment"
     STORY_CHAPTER = "story_chapter"
+    FACTION_CHANGE = "faction_change"
+    VOTE_CALLED = "vote_called"
+    VOTE_RESULT = "vote_result"
 
 
 @dataclass

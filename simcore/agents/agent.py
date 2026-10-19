@@ -9,10 +9,10 @@ from simcore.agents.memory import MemorySystem
 from simcore.agents.persona import Persona
 
 ALL_ACTIONS = ("move|speak|whisper|invite|follow|find|interact|wait|observe|work|rest|give|take|drop|"
-               "use|trade|accept|decline")
+               "use|trade|accept|decline|attack|heal|found_group|join|leave|expel|call_vote|vote")
 # What a mind without speech can't do (see simcore.config.schema.MindConfig).
 SPEECH_ACTION_NAMES = frozenset({"speak", "whisper", "invite", "interact", "trade", "give", "accept",
-                                 "decline", "post"})
+                                 "decline", "post", "found_group", "join", "expel", "call_vote", "vote"})
 
 
 @dataclass
@@ -193,6 +193,9 @@ Decide your next action. Respond in this exact JSON format:
     "ask_amount": 1,
     "share": "<optional, with speak/interact: something you believe or a secret you decide to tell them>",
     "place": "<only for invite: where to meet; empty = a quiet place>",
+    "goal": "<only for found_group: what the group is for>",
+    "options": ["<only for call_vote: the choices>"],
+    "emotion": "<optional: how you feel now, e.g. calm, afraid, angry, sad, happy, hopeful>",
     "plan_step_done": false,
     "reasoning": "<brief internal thought>"
 }}
@@ -211,6 +214,9 @@ Target rules (strict):
 - For "speak" and "interact": target is one or more people listed in "People here", e.g. "Ana" or "Ana, Bob", or "everyone" to address the whole room. Everyone here hears what you say with "speak" ("interact" is private).
 - "whisper": like "speak" but only the target hears the words (others just see you whisper).
 - "invite": you go to "place" and ask the target (people here) to join you there, to talk alone. "follow": go wherever the target (a person here) goes this turn.
+- "attack": hurt someone here (with your best weapon, or your fists); it can kill. "heal": treat someone here (or yourself, empty target) with a healing item or your skills.
+- "found_group": start a group (content: its name, goal: its purpose, target: people here you invite). "join" (target: the group), "leave" your group, "expel" (leaders only, target: a member).
+- "call_vote": put a matter to the vote of the people here (content: the question, options: the choices). "vote" (content: your option) when there is a vote here.
 - "find": look for someone who is NOT here (target: their name). It asks the people here or goes to the best clue; keep using it until you find them.
 - For "trade", "give": target MUST be the exact name of a real person listed in "People here" above. NEVER a location name, shop name, building, or invented person. If "People here" is empty or "You are alone", you CANNOT speak/trade/interact — choose move, observe, work, or rest instead.
 - If several people are waiting for your answer, answer them all in one line (target "Ana, Bob").

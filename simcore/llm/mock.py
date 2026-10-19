@@ -31,6 +31,40 @@ class MockLLMProvider:
         action.plan_step_done = "Your plan for today" in user_prompt and self._rng.random() < 0.3
         return action
 
+    def _society_decision(self, prompt: str, nearby: list[str], location: str) -> Action | None:
+        roll = self._rng.random()
+        vote = re.search(r'There is a vote here: "(.+?)" \(options: (.+?)\)\.', prompt)
+        if vote and roll < 0.8:
+            return Action(type=ActionType.VOTE, content=self._rng.choice(vote.group(2).split(", ")),
+                          reasoning=f"My say on: {vote.group(1)}")
+        invite = re.search(r'invited you to join "(.+?)"', prompt)
+        if invite and roll < 0.6:
+            return Action(type=ActionType.JOIN, target=invite.group(1), reasoning="Better together")
+        friends = re.search(r"^(.+?) think like you: you could form a group", prompt, re.MULTILINE)
+        if friends and roll < 0.25:
+            who = friends.group(1).replace(" and ", ", ")
+            return Action(type=ActionType.FOUND_GROUP, content=f"Los de {location}" if location else "Los nuestros",
+                          goal="Cuidarnos entre nosotros", target=who, reasoning="We should stick together")
+        matter = re.search(r"Matters you can put to a vote here \(.*?\): (.+?)(?:;|\.$)", prompt, re.MULTILINE)
+        if matter and roll < 0.06:
+            return Action(type=ActionType.CALL_VOTE, content=matter.group(1).strip(), reasoning="Let's decide together")
+        hurt = [n for n in _names_after(prompt, "Visibly hurt or sick: ") if n in nearby]
+        if hurt and '"heal" someone' in prompt and roll < 0.3:
+            return Action(type=ActionType.HEAL, target=self._rng.choice(hurt), reasoning="They need care")
+        grudge = re.search(r"You feel angry towards (.+?)\.", prompt)
+        if grudge and grudge.group(1) in nearby and roll < 0.1:
+            return Action(type=ActionType.ATTACK, target=grudge.group(1), reasoning="I've had enough of them",
+                          emotion="angry")
+        routine = re.search(r"At this time you usually: (\w+)(?: at ([^;.]+))?", prompt)
+        if routine and roll < 0.4:
+            act, places = routine.group(1), (routine.group(2) or "").split("/")
+            places = [p.strip() for p in places if p.strip()]
+            if places and location not in places:
+                return Action(type=ActionType.MOVE, target=places[0], reasoning=f"Time to {act}")
+            if act in ("rest", "work"):
+                return Action(type=ActionType(act), content="as usual", reasoning="Same as every day")
+        return None
+
     def _search_decision(self, prompt: str, nearby: list[str]) -> Action | None:
         found = re.search(r"You found (.+?): they are here\.(?: You wanted to tell them: \"(.*?)\"\.)?", prompt)
         if found and found.group(1) in nearby:
@@ -131,6 +165,11 @@ class MockLLMProvider:
         private = self._private_decision(user_prompt, nearby)
         if private:
             return private
+
+        # Groups, votes, healing, grudges and routines.
+        social = self._society_decision(user_prompt, nearby, location)
+        if social:
+            return social
 
         # Looking for someone: talk to them once found, keep looking, or start looking.
         search = self._search_decision(user_prompt, nearby)

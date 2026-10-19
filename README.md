@@ -370,6 +370,30 @@ events:
 - **Being ignored:** if a listener has 2 turns to answer and does something else, the speaker learns it is being ignored. It gets a note ("don't insist: ask someone else, go somewhere else or act on your own"), it remembers it, the relationship drops a little and it replans. The engine emits `speech_ignored` (`agent`, `by`, `text`, `turns`).
 - **Name matching:** names are found ignoring accents, case and titles (`padre julian`, `Julián` → `Padre Julián`).
 
+### Society: attack and heal, groups, votes, reputation, favors, routines, emotions
+
+**Built-in actions:**
+- **`attack` and `heal`** (also `atacar`, `matar`, `curar`, `shoot`…), in any scenario:
+  - **attack** uses the agent's best weapon, from items with `weapon: {damage, chance, ammo}`, spending ammo; without one it fights with its fists. It can kill.
+  - **heal** uses the best healing item the agent carries. Without one, only people in `society.healers` can heal: a small boost that removes `heal_removes` conditions.
+  - A scenario action with the same name (a scenario's own `disparar`) still wins.
+- **Groups:**
+  - Configured in `factions: {Guardia: {goal, leader, members, rivals}}` or per agent with `faction:`.
+  - **Founded by agents** (`found_group` with a name, a `goal` and people to invite), then `join`, `leave` and `expel` (leaders).
+  - **The engine suggests** forming one when three or more people who like each other meet.
+  - A group gets a new leader (the best reputation) when its leader dies or leaves. A group founded during the run dissolves when one person is left.
+  - Attacks across groups make them rivals.
+  - Effects `join`/`leave`, and rules can `count` by `faction`.
+- **Votes:** `call_vote` (a question and `options`) at the place the agent is; people there `vote`. Matters in `votes:` carry effects per outcome, e.g. `{question: "¿Cerramos la pensión?", options: {sí: {locations: {Pensión: {closed: true}}}, no: {}}}`.
+
+**Tracked by the engine:**
+- **Reputation:** helping, giving and healing raise it; attacking someone who was no threat lowers it. Others see it as labels (respected / distrusted…).
+- **Favors:** receiving a gift or being healed creates a debt; giving back settles it, and one unpaid for a day sours things.
+- **Routines and time of day:** `routines` by agent name, profession or `*`, per `night` / `morning` / `day` / `evening`, e.g. `{médica: {night: {rest: [Pensión]}}}`. Without them, the prompt still says what people usually do at that hour.
+- **Emotions:** the answer may include `"emotion"`; otherwise it comes from what happened (attacked → angry or afraid, healed → relieved…) or the mood. Others see it ("Lola looks furious").
+
+**In events and state:** `faction_change`, `vote_called`, `vote_result`; each agent's `faction`, `reputation`, `emotion` and `owes`; and `society` (groups and open votes).
+
 ### The story of a run
 
 - **Key moments:** they are picked from the events as they happen.

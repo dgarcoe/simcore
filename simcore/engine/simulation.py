@@ -18,6 +18,7 @@ from simcore.engine.conditions import ConditionsMixin
 from simcore.engine.conversations import ConversationsMixin
 from simcore.engine.minds import MindsMixin
 from simcore.engine.search import SearchMixin
+from simcore.engine.society import SocietyMixin
 from simcore.engine.story import StoryMixin
 from simcore.engine.world import WorldMixin
 from simcore.engine.effects import ALL, LOCATION_PREFIX, Effects, parse_effects
@@ -60,8 +61,20 @@ def _has(inv: dict[str, float], item: str, amount: float) -> bool:
     return bool(item) and inv.get(item, 0) + 1e-9 >= amount
 
 
+SOCIETY_ACTIONS = {
+    ActionType.ATTACK: "_apply_attack",
+    ActionType.HEAL: "_apply_heal",
+    ActionType.FOUND_GROUP: "_apply_found_group",
+    ActionType.JOIN: "_apply_join",
+    ActionType.LEAVE: "_apply_leave",
+    ActionType.EXPEL: "_apply_expel",
+    ActionType.CALL_VOTE: "_apply_call_vote",
+    ActionType.VOTE: "_apply_vote",
+}
+
+
 class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin,
-                       SearchMixin, StoryMixin):
+                       SearchMixin, StoryMixin, SocietyMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -80,6 +93,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_awareness()
         self._init_search()
         self._init_story()
+        self._init_society()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -296,6 +310,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         # Gather decisions in parallel
         self._see_around(tick)
         await self._searches_tick(tick)
+        await self._society_tick(tick)
         decisions = await asyncio.gather(*[
             self._agent_turn(agent, tick) for agent in agent_list
         ])
@@ -353,6 +368,11 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 from simcore.llm.prompts import language_directive
                 persona_prompt = f"{persona_prompt}\n\n{language_directive(lang)}"
             action = await self.llm.decide(persona_prompt, prompt)
+            alias = action.parameters.get("alias_of") if action.parameters else None
+            if alias and alias in self.config.actions:
+                # "disparar", "curar"… named after a scenario action: that one wins over the built-in
+                action = Action(type=ActionType.CUSTOM, target=action.target, content=action.content,
+                                reasoning=action.reasoning, parameters={"name": alias})
             action = self._enforce_mind(agent, action, tick)
 
         # Apply action
@@ -384,6 +404,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             action = await self._apply_custom_action(agent, action, tick)
         elif action.type == ActionType.FIND:
             action = await self._apply_find(agent, action, tick)
+        elif action.type in SOCIETY_ACTIONS:
+            action = await getattr(self, SOCIETY_ACTIONS[action.type])(agent, action, tick)
         elif (action.type in (ActionType.SPEAK, ActionType.WHISPER, ActionType.INVITE)
               and (absent := self._absent_person(agent, action.target))):
             # Talking to someone who isn't here: go and find them instead of wasting the turn.
@@ -405,6 +427,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         if action.type == ActionType.MOVE and agent.location != origin:
             self._note_move(agent, origin, agent.location, tick)
         self._note_doing(agent, action, tick)
+        await self._after_action_society(agent, action, tick)
         await self._check_ignored(agent, action, tick)
         if action.type == ActionType.WORK:
             await self._produce(agent, tick)
@@ -412,7 +435,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         await self._after_action_minds(agent, action, tick)
         if self.config.conditions and action.target and action.type in (
                 ActionType.SPEAK, ActionType.INTERACT, ActionType.WHISPER, ActionType.GIVE,
-                ActionType.TRADE, ActionType.ACCEPT, ActionType.USE, ActionType.CUSTOM):
+                ActionType.TRADE, ActionType.ACCEPT, ActionType.USE, ActionType.CUSTOM,
+                ActionType.ATTACK, ActionType.HEAL):
             for other in self._addressees(agent, action):
                 await self._spread_by_interaction(agent, other, tick)
 
@@ -435,6 +459,10 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 **({"targets": action.parameters["targets"]} if action.parameters.get("targets") else {}),
                 **({"place": action.place, "from": action.parameters.get("from", "")}
                    if action.type == ActionType.INVITE else {}),
+                **({k: v for k, v in action.parameters.items()
+                    if k in ("weapon", "damage", "killed", "hit", "healed", "with", "faction", "invited",
+                             "question", "options")}
+                   if action.type in SOCIETY_ACTIONS else {}),
                 **({"step": action.parameters.get("step", ""), "place": action.parameters.get("place", ""),
                     "from": action.parameters.get("from", "")}
                    if action.type == ActionType.FIND else {}),
@@ -504,6 +532,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                       "" if forgets else self._minds_prompt(agent),
                       self._awareness_prompt(agent, tick, speech=not mute),
                       "" if forgets else self._search_prompt(agent, tick),
+                      "" if mute else self._society_prompt(agent, tick),
                       "" if mute else self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
@@ -644,6 +673,12 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             for i in range(spawn.count):
                 name = f"{spawn.name} {i + 1}" if spawn.count > 1 else spawn.name
                 await self._spawn(spawn, tick, cause, name=name)
+        for spec, group in effects.join.items():
+            for agent in self._resolve_targets(spec):
+                await self._join_faction(agent.name, group, tick)
+        for spec in effects.leave:
+            for agent in self._resolve_targets(spec):
+                await self._leave_faction(agent.name, tick)
         for spec, (text, truth) in effects.rumor.items():
             for agent in self._resolve_targets(spec):
                 await self._learn(agent, text, "rumor", truth, tick)
@@ -945,6 +980,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
 
     def _agent_state(self, agent: Agent) -> dict:
         data = agent.to_dict()
+        data.update(self._society_state(agent))
         search = self._search_state(agent)
         if search:
             data["search"] = search
@@ -983,5 +1019,6 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 (cfg.name for t, cfgs in self._arrivals.items() if t > self.clock.current_tick for cfg in cfgs)
             ),
             "environment": self.environment.to_dict(),
+            "society": self.society_state(),
             "llm_stats": self.llm.stats,
         }

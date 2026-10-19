@@ -203,8 +203,11 @@ def test_effects_add_and_remove_conditions_and_spawn_with_conditions():
 
 def test_parser_maps_unknown_names_to_scenario_actions():
     p = LLMProvider()
+    a = p._parse_action(json.dumps({"action": "Bite", "target": "Zed"}))
+    assert a.type == ActionType.CUSTOM and a.parameters["name"] == "bite" and a.target == "Zed"
+    # "shoot" is also the built-in attack; the engine keeps a scenario's own "shoot" (alias_of)
     a = p._parse_action(json.dumps({"action": "Shoot", "target": "Zed"}))
-    assert a.type == ActionType.CUSTOM and a.parameters["name"] == "shoot" and a.target == "Zed"
+    assert a.type == ActionType.ATTACK and a.parameters["alias_of"] == "shoot"
     assert p._parse_action(json.dumps({"action": "go away!"})).type == ActionType.WAIT
 
 

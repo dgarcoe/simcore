@@ -37,6 +37,8 @@ class AgentConfig(BaseModel):
     # Things the agent believes (maybe wrongly) and true things it keeps to itself.
     beliefs: list[BeliefConfig | str] = Field(default_factory=list)
     secrets: list[str] = Field(default_factory=list)
+    # Group the agent starts in (see SimulationConfig.factions).
+    faction: str = ""
 
 
 class RelationshipConfig(BaseModel):
@@ -70,6 +72,12 @@ class SpawnConfig(AgentConfig):
 USE_KEYS = ("health", "energy", "mood")
 
 
+class WeaponConfig(BaseModel):
+    damage: float = Field(0.4, ge=0.0, le=1.0)  # health taken from the victim on a hit
+    chance: float = Field(0.7, ge=0.0, le=1.0)  # probability of hitting
+    ammo: str = ""  # item spent on each attack (cartridges, arrows…)
+
+
 class ItemConfig(BaseModel):
     """An object agents can carry, give, trade and use."""
 
@@ -80,6 +88,8 @@ class ItemConfig(BaseModel):
     on_use: dict[str, float] = Field(default_factory=dict)
     # Conditions removed from whoever the item is used on (an antidote cures "infected").
     cures: list[str] = Field(default_factory=list)
+    # Makes "attack" stronger: {damage, chance, ammo}.
+    weapon: WeaponConfig | None = None
 
     @field_validator("on_use")
     @classmethod
@@ -158,6 +168,33 @@ class MindConfig(BaseModel):
     speech: bool = True  # false: can't speak, whisper, invite, interact, trade or give
     memories: bool = True  # false: forgets who it was (no memories, relationships, beliefs, plans)
     actions: list[str] = Field(default_factory=list)  # if set, the only actions it may take
+
+
+class FactionConfig(BaseModel):
+    """A group agents start in; more can be founded by the agents during the run."""
+
+    goal: str = ""
+    leader: str = ""
+    members: list[str] = Field(default_factory=list)
+    rivals: list[str] = Field(default_factory=list)
+    color: str = ""
+
+
+class VoteConfig(BaseModel):
+    """A matter that can be put to a vote, with what each outcome does (effects language)."""
+
+    question: str
+    options: dict[str, dict[str, object]] = Field(default_factory=lambda: {"yes": {}, "no": {}})
+    duration: int = Field(2, ge=1)  # ticks the vote stays open
+
+
+class SocietyConfig(BaseModel):
+    spontaneous_groups: bool = True  # agents may found groups of their own
+    # Professions that can heal without an item (substring match).
+    healers: list[str] = Field(default_factory=lambda: ["médic", "medic", "enfermer", "nurse", "sanitari",
+                                                         "veterinari", "doctor", "paramedic"])
+    # Conditions a healer removes ("wounded").
+    heal_removes: list[str] = Field(default_factory=lambda: ["herido", "injured", "wounded", "hurt"])
 
 
 class ConditionConfig(BaseModel):
@@ -251,11 +288,12 @@ def _same(a: object, b: object) -> bool:
 
 
 class CountSpec(Compare):
-    """How many living agents (optionally with / without a condition, or in a place)."""
+    """How many living agents (optionally with / without a condition, in a place or a group)."""
 
     condition: str = ""
     not_condition: str = ""
     location: str = ""
+    faction: str = ""
 
 
 class PlaceSpec(BaseModel):
@@ -394,13 +432,20 @@ class SimulationConfig(BaseModel):
     # Needs (hunger, sleep…) and world rules (when X → effects / end of the run).
     needs: dict[str, NeedConfig] = Field(default_factory=dict)
     rules: list[RuleConfig] = Field(default_factory=list)
+    factions: dict[str, FactionConfig] = Field(default_factory=dict)
+    votes: dict[str, VoteConfig] = Field(default_factory=dict)
+    society: SocietyConfig = Field(default_factory=SocietyConfig)
+    # Daily routines by agent name, profession (substring) or "*":
+    # {"médica": {"day": {"work": ["Hospital"]}, "night": {"rest": ["Pensión"]}}}
+    routines: dict[str, dict[str, dict[str, list[str]]]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _check_references(self) -> "SimulationConfig":
         conds, acts = set(self.conditions), set(self.actions)
         builtin = {"move", "speak", "trade", "interact", "wait", "observe", "work", "rest", "post",
                    "custom", "give", "take", "drop", "use", "accept", "decline",
-                   "whisper", "invite", "follow", "find"}
+                   "whisper", "invite", "follow", "find", "attack", "heal", "found_group", "join",
+                   "leave", "expel", "call_vote", "vote"}
         problems: list[str] = []
 
         def need(names, where: str) -> None:
@@ -455,6 +500,19 @@ class SimulationConfig(BaseModel):
                     problems.append(f"{where} counts in unknown place '{rule.when.count.location}'")
             problems.extend(f"{where} checks unknown place '{p}'" for p in rule.when.place if p not in places)
         names = {a.name for a in self.agents}
+        for fname, f in self.factions.items():
+            problems.extend(f"faction {fname} has unknown member '{m}'" for m in f.members if m not in names)
+            if f.leader and f.leader not in names:
+                problems.append(f"faction {fname} has unknown leader '{f.leader}'")
+        for key, vote in self.votes.items():
+            for option, fx in vote.options.items():
+                check_effects(fx or {}, f"vote {key} ({option})")
+        for who, phases in self.routines.items():
+            for phase, todo in phases.items():
+                if phase not in ("night", "morning", "day", "evening"):
+                    problems.append(f"routine {who} uses unknown time of day '{phase}'")
+                problems.extend(f"routine {who} goes to unknown place '{p}'"
+                                for where in todo.values() for p in where if p not in places)
         for a in self.agents:
             problems.extend(f"agent {a.name} has unknown need '{n}'" for n in a.needs if n not in needs)
             problems.extend(f"agent {a.name} has a relationship with unknown agent '{n}'"

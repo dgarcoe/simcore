@@ -16,6 +16,8 @@ An event's ``effects`` mapping mixes two kinds of keys:
       adjust: {oxygen: -0.1}                          # add to numeric world variables
       end: "The colony has fallen"                    # ends the run
       rumor: {"Lucía": "The hunter brought the beast", "all": {text: "...", true: false}}
+      join: {"Ana": "Guardia"}                        # puts agents in a group (created if new)
+      leave: ["Ana"]                                  # takes them out of their group
       spawn:                         # new agents arrive
         - {name: "Rescue worker", profession: "paramedic",
            starting_location: "Plaza", count: 2}
@@ -34,7 +36,7 @@ from typing import Any
 from simcore.config.schema import SpawnConfig
 
 RESERVED_KEYS = frozenset({"health", "kill", "depart", "spawn", "items", "add_condition",
-                           "remove_condition", "needs", "locations", "adjust", "end", "rumor"})
+                           "remove_condition", "needs", "locations", "adjust", "end", "rumor", "join", "leave"})
 LOCATION_KEYS = frozenset({"closed", "hazard", "access"})
 LOCATION_PREFIX = "location:"
 ALL = "all"
@@ -59,12 +61,14 @@ class Effects:
     end: str = ""
     # target → (text, truth) told to them as a rumor
     rumor: dict[str, tuple[str, bool | None]] = field(default_factory=dict)
+    join: dict[str, str] = field(default_factory=dict)  # target → group
+    leave: list[str] = field(default_factory=list)  # targets
 
     @property
     def empty(self) -> bool:
         return not (self.global_updates or self.health or self.kill or self.depart or self.spawn
                     or self.items or self.add_condition or self.remove_condition or self.needs
-                    or self.locations or self.adjust or self.end or self.rumor)
+                    or self.locations or self.adjust or self.end or self.rumor or self.join or self.leave)
 
 
 def _targets(value: Any, key: str) -> list[str]:
@@ -135,6 +139,12 @@ def parse_effects(raw: dict[str, Any] | None) -> Effects:
                     isinstance(n, (int, float)) and not isinstance(n, bool) for n in value.values()):
                 raise ValueError("effects.adjust must map world variables to numbers, e.g. {oxygen: -0.1}")
             out.adjust = {str(k): float(n) for k, n in value.items()}
+        elif key == "join":
+            if not isinstance(value, dict):
+                raise ValueError('effects.join must map targets to a group, e.g. {Ana: "Guardia"}')
+            out.join = {str(k): str(v) for k, v in value.items() if str(v).strip()}
+        elif key == "leave":
+            out.leave = [str(v) for v in (value if isinstance(value, list) else [value])]
         elif key == "rumor":
             if not isinstance(value, dict):
                 raise ValueError("effects.rumor must map targets to a text, e.g. {Ana: \"The well is poisoned\"}")

@@ -89,6 +89,9 @@ class AwarenessMixin:
                 doing = self._doing.get(o.id)
                 if doing and doing[0] < tick and not (came and came[0] == doing[0]):
                     bits.append(doing[1])
+                looks = self._looks(o, tick)
+                if looks:
+                    bits.append(looks)
                 if o.state.health < 0.3:
                     bits.append("badly hurt")
                 elif o.state.health < 0.6:
