@@ -254,6 +254,7 @@ Target rules (strict):
             for name, rel in self.memory.relationships.items()
         }
         kinds = {name: rel.kind for name, rel in self.memory.relationships.items() if rel.kind}
+        scores = {name: round(rel.sentiment, 2) for name, rel in self.memory.relationships.items()}
         return {
             "id": self.id,
             "name": self.name,
@@ -282,5 +283,6 @@ Target rules (strict):
             },
             "relationships": relationships,
             "relationship_kinds": kinds,
+            "relationship_scores": scores,
             "memory_summary": self.memory.get_context(max_entries=5),
         }
