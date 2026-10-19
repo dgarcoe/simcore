@@ -76,7 +76,7 @@ class AwarenessMixin:
             return (other.location, self.clock.current_tick, "seen")
         return self._last_seen.get(agent.id, {}).get(other.name)
 
-    def _awareness_prompt(self, agent: Agent, tick: int) -> str:
+    def _awareness_prompt(self, agent: Agent, tick: int, speech: bool = True) -> str:
         lines = []
         here = [a for a in self.living_agents if a.location == agent.location and a.id != agent.id]
         if here:
@@ -119,7 +119,7 @@ class AwarenessMixin:
         if empty:
             lines.append("Places with nobody there (as far as you know): " + ", ".join(empty) + ".")
 
-        if here:
+        if here and speech:
             lines.append(
                 f'If you "speak" here, {", ".join(o.name for o in here)} will hear it. '
                 '"whisper" and "interact" are private. To talk alone, "invite" someone to a '

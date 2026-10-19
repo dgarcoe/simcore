@@ -337,12 +337,15 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 if (agent.state.plan_tick, agent.state.plan_step) != had:
                     observation = self._build_observation(agent, tick, lang)
             agent.observe(observation, tick, importance=0.3)
-            prompt = agent.build_prompt(observation, language=lang)
-            persona_prompt = agent.persona.to_prompt()
+            found = self._mind(agent)
+            mind = found[1] if found else None
+            prompt = agent.build_prompt(observation, language=lang, mind=mind)
+            persona_prompt = agent.persona_prompt(mind)
             if lang != "en":
                 from simcore.llm.prompts import language_directive
                 persona_prompt = f"{persona_prompt}\n\n{language_directive(lang)}"
             action = await self.llm.decide(persona_prompt, prompt)
+            action = self._enforce_mind(agent, action, tick)
 
         # Apply action
         origin = agent.location
@@ -473,8 +476,13 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             extra = self._conditions_prompt(agent)
             if extra:
                 observation += "\n" + extra
-        for extra in (self._needs_prompt(agent), self._places_prompt(), self._minds_prompt(agent),
-                      self._awareness_prompt(agent, tick), self._conversation_prompt(agent, tick)):
+        found = self._mind(agent)
+        forgets = bool(found) and not found[1].memories
+        mute = bool(found) and not found[1].speech
+        for extra in (self._needs_prompt(agent), self._places_prompt(),
+                      "" if forgets else self._minds_prompt(agent),
+                      self._awareness_prompt(agent, tick, speech=not mute),
+                      "" if mute else self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
         guide = self._item_guide(set(agent.state.resources) | set(stock))
@@ -493,8 +501,9 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         """Run periodic reflection for all agents."""
         lang = getattr(self.config, "language", "en")
         for agent in self.living_agents:
-            if self._controller(agent) is not None:
-                continue  # rule-controlled agents don't reflect
+            found = self._mind(agent)
+            if self._controller(agent) is not None or (found and not found[1].memories):
+                continue  # rule-controlled agents and minds that forgot who they were don't reflect
             memories = agent.memory.get_context(max_entries=10)
             if memories:
                 summary = await self.llm.reflect(memories, language=lang)
@@ -912,15 +921,27 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         if self._tick_task is not None and not self._tick_task.done():
             self._tick_task.cancel()
 
+    def _agent_state(self, agent: Agent) -> dict:
+        data = agent.to_dict()
+        found = self._mind(agent)
+        if found:
+            name, mind = found
+            p = agent.persona
+            data["mind"] = {"condition": name, "goals": list(mind.goals), "speech": mind.speech,
+                            "memories": mind.memories,
+                            "identity": mind.identity.replace("{name}", p.name).replace("{profession}", p.profession)}
+        return data
+
     def get_state(self) -> dict:
         """Get full simulation state snapshot."""
         return {
             "clock": self.clock.to_dict(),
-            "agents": {aid: a.to_dict() for aid, a in self.agents.items()},
+            "agents": {aid: self._agent_state(a) for aid, a in self.agents.items()},
             "items": {name: item.model_dump() for name, item in self.config.items.items()},
             "conditions": {
                 name: {"description": c.description, "appearance": c.appearance, "color": c.color,
-                       "controller": c.controller, "becomes": c.becomes, "duration": c.duration}
+                       "controller": c.controller, "becomes": c.becomes, "duration": c.duration,
+                       "mind": c.mind.model_dump() if c.mind else None}
                 for name, c in self.config.conditions.items()
             },
             "actions": {

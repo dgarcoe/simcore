@@ -370,6 +370,32 @@ events:
 - **Being ignored:** if a listener has 2 turns to answer and does something else, the speaker learns it is being ignored. It gets a note ("don't insist: ask someone else, go somewhere else or act on your own"), it remembers it, the relationship drops a little and it replans. The engine emits `speech_ignored` (`agent`, `by`, `text`, `turns`).
 - **Name matching:** names are found ignoring accents, case and titles (`padre julian`, `Julián` → `Padre Julián`).
 
+### Conditions that change an agent's mind
+
+A condition can turn an agent into someone else **while the LLM keeps deciding** for it, as a different
+kind of agent with its own goals. What it can't do is fixed by the scenario and enforced by the engine:
+
+```yaml
+conditions:
+  zombie:
+    appearance: a body that walks and groans
+    mind:
+      identity: "You are no longer {name}. You are the walking dead: you only feel hunger for the living."
+      goals: [Find the living, Bite them]
+      speech: false        # can't speak, whisper, invite, interact, trade or give
+      memories: false      # forgets who it was: no memories, relationships, beliefs or plans
+      actions: [move, wait, observe, follow, bite]   # optional whitelist
+```
+
+- **The prompt changes:**
+  - `identity` and `goals` replace the persona; `{name}` and `{profession}` are filled in;
+  - without `memories`, the agent's past, relationships, secrets and plans leave the prompt, and it doesn't plan or reflect;
+  - the action list only shows what is allowed.
+- **Enforced by the engine:** anything forbidden that the model still picks becomes a wait, and the agent remembers why.
+- **In the state:** each agent gets a `mind` entry with the condition, identity, goals and limits, and conditions report their `mind`.
+- **`mind` vs `controller: rules`:** `rules` still exists as the cheap option, with no LLM calls (good for big hordes). A `mind` costs one LLM call per agent per tick, like anyone else.
+- **Requirements:** `Requirement` also accepts `any_conditions` ("at least one of"), e.g. an action that works on a zombie *or* a horde walker.
+
 ### Situational awareness and private talk
 
 - **What each agent's prompt shows:**

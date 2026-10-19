@@ -8,6 +8,12 @@ from simcore.agents.actions import Action, ActionType, fmt_amount
 from simcore.agents.memory import MemorySystem
 from simcore.agents.persona import Persona
 
+ALL_ACTIONS = ("move|speak|whisper|invite|follow|interact|wait|observe|work|rest|give|take|drop|use|"
+               "trade|accept|decline")
+# What a mind without speech can't do (see simcore.config.schema.MindConfig).
+SPEECH_ACTION_NAMES = frozenset({"speak", "whisper", "invite", "interact", "trade", "give", "accept",
+                                 "decline", "post"})
+
 
 @dataclass
 class AgentState:
@@ -76,12 +82,29 @@ class Agent:
         """Record an observation in memory."""
         self.memory.add(tick=tick, content=observation, importance=importance)
 
-    def build_prompt(self, observation: str, language: str = "en") -> str:
-        """Build the full prompt for LLM decision-making."""
+    def persona_prompt(self, mind=None) -> str:
+        """Who the agent is; a condition's mind (simcore.config.schema.MindConfig) replaces it."""
+        if mind is None:
+            return self.persona.to_prompt()
+        p = self.persona
+        identity = mind.identity.replace("{name}", p.name).replace("{profession}", p.profession)
+        lines = [identity or f"You are {p.name}."]
+        if mind.memories:
+            lines.append(f"Personality: {p.personality.describe()}.")
+            if p.backstory:
+                lines.append(f"Who you were: {p.backstory}")
+        if mind.goals:
+            lines.append(f"Your goals now: {', '.join(mind.goals)}.")
+        return "\n".join(lines)
+
+    def build_prompt(self, observation: str, language: str = "en", mind=None) -> str:
+        """Build the full prompt for LLM decision-making (``mind``: a condition's MindConfig)."""
         from simcore.agents.actions import ActionType
         from simcore.llm.prompts import language_directive
-        memory_context = self.memory.get_context()
-        persona_prompt = self.persona.to_prompt()
+        forgets = mind is not None and not mind.memories
+        mute = mind is not None and not mind.speech
+        memory_context = "" if forgets else self.memory.get_context()
+        persona_prompt = self.persona_prompt(mind)
 
         if self.state.energy < 0.15:
             energy_desc = "CRITICAL — you are exhausted, you MUST rest this turn"
@@ -121,6 +144,8 @@ class Agent:
                 if len(recent_lines) >= 3:
                     break
         recent_dialogue = ""
+        if forgets or mute:
+            recent_lines, recent_targets = [], set()
         if recent_lines:
             recent_dialogue = (
                 "Things you said recently (DO NOT repeat these phrases — speak with fresh wording):\n"
@@ -133,7 +158,20 @@ class Agent:
                 f"If you speak to any of them again, DO NOT start with a greeting — go straight to the point."
             )
 
-        return f"""{persona_prompt}
+        actions = ALL_ACTIONS
+        if mind is not None:
+            allowed = list(mind.actions) or ALL_ACTIONS.split("|")
+            if mute:
+                allowed = [a for a in allowed if a not in SPEECH_ACTION_NAMES]
+            actions = "|".join(dict.fromkeys(["wait", *allowed]))
+        limits = ""
+        if mute:
+            limits += ("\nYou cannot speak or communicate in any way: never use speak, whisper, invite, "
+                       "interact, trade or give.")
+        if mind is not None and mind.actions:
+            limits += f"\nThe only actions you can take: {actions.replace('|', ', ')}."
+
+        return f"""{persona_prompt}{limits}
 
 {state_desc}
 
@@ -146,7 +184,7 @@ Current situation:
 
 Decide your next action. Respond in this exact JSON format:
 {{
-    "action": "move|speak|whisper|invite|follow|interact|wait|observe|work|rest|give|take|drop|use|trade|accept|decline",
+    "action": "{actions}",
     "target": "<see target rules below>",
     "content": "<what you say or do>",
     "item": "<item name, only for give/take/drop/use/trade>",

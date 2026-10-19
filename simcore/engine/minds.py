@@ -79,6 +79,9 @@ class MindsMixin:
     async def _maybe_plan(self, agent: Agent, observation: str, tick: int, lang: str) -> None:
         if not self.config.planning or not hasattr(self.llm, "plan"):
             return
+        found = self._mind(agent)
+        if found and not found[1].memories:
+            return  # it no longer remembers its plans
         st = agent.state
         due = not st.plan or tick - st.plan_tick >= self.config.plan_every or st.plan_step >= len(st.plan)
         if not (due or st.replan):

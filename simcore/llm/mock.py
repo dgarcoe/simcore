@@ -31,6 +31,27 @@ class MockLLMProvider:
         action.plan_step_done = "Your plan for today" in user_prompt and self._rng.random() < 0.3
         return action
 
+    def _mute_decision(self, prompt: str, nearby: list[str], location: str) -> Action:
+        special = self._special_decision(prompt, nearby, chance=0.85)
+        if special:
+            return special
+        places = re.findall(r"(?:went to|at) ([^(;,.]+?)(?: \(|;|\.)", prompt.split("Who left:", 1)[-1]
+                            if "Who left:" in prompt else prompt.split("Last seen:", 1)[-1]
+                            if "Last seen:" in prompt else "")
+        places = [p.strip() for p in places if p.strip() and p.strip() != location]
+        if not nearby and places and self._rng.random() < 0.6:
+            return Action(type=ActionType.MOVE, target=self._rng.choice(places), reasoning="I smell them over there")
+        movable = self._extract_list(prompt, "Available locations you can move to: ")
+        if not nearby and movable and self._rng.random() < 0.5:
+            return Action(type=ActionType.MOVE, target=self._rng.choice(movable), reasoning="Wandering")
+        return Action(type=ActionType.WAIT, reasoning="Groaning")
+
+    def _extract_list(self, prompt: str, marker: str) -> list[str]:
+        if marker not in prompt:
+            return []
+        line = prompt.split(marker, 1)[1].split("\n", 1)[0].rstrip(".")
+        return [x.strip() for x in line.split(",") if x.strip()]
+
     def _private_decision(self, user_prompt: str, nearby: list[str]) -> Action | None:
         invite = re.search(r"^(.+?) asks you to come to (.+?)(?::|\. Go there)", user_prompt, re.MULTILINE)
         if invite and self._rng.random() < 0.6:
@@ -69,6 +90,10 @@ class MockLLMProvider:
         extraversion = self._extract_trait(system_prompt, "outgoing")
         is_creative = "curious" in system_prompt.lower()
         is_hardworker = "organized" in system_prompt.lower() or "disciplined" in system_prompt.lower()
+
+        # A changed mind that can't communicate (a zombie…): hunt, follow people, roam.
+        if "You cannot speak or communicate" in user_prompt:
+            return self._mute_decision(user_prompt, nearby, location)
 
         # Pressing needs first (hunger, sleep…).
         urgent = self._need_decision(user_prompt, location)
@@ -237,8 +262,8 @@ class MockLLMProvider:
                     return Action(type=ActionType.REST, reasoning="I'm exhausted")
         return None
 
-    def _special_decision(self, prompt: str, nearby: list[str]) -> Action | None:
-        if "Special actions you can do now" not in prompt or self._rng.random() > 0.3:
+    def _special_decision(self, prompt: str, nearby: list[str], chance: float = 0.3) -> Action | None:
+        if "Special actions you can do now" not in prompt or self._rng.random() > chance:
             return None
         block = prompt.split("Special actions you can do now", 1)[1]
         options = re.findall(r"^- ([\w-]+) \((target: a person here|no target)", block, re.MULTILINE)

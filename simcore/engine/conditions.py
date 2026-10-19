@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from simcore.agents.actions import Action, ActionType, fmt_amount
-from simcore.config.schema import ActionConfig, ConditionConfig, Outcome, Requirement
+from simcore.config.schema import ActionConfig, ConditionConfig, MindConfig, Outcome, Requirement
 from simcore.engine.events import EventType, SimEvent
 
 if TYPE_CHECKING:
@@ -16,6 +16,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger("simcore")
 
 STATS = ("health", "energy", "mood")
+# What a mind without speech can't do.
+SPEECH_ACTIONS = frozenset({
+    ActionType.SPEAK, ActionType.WHISPER, ActionType.INVITE, ActionType.INTERACT, ActionType.TRADE,
+    ActionType.GIVE, ActionType.ACCEPT, ActionType.DECLINE, ActionType.POST,
+})
 
 
 class ConditionsMixin:
@@ -34,6 +39,37 @@ class ConditionsMixin:
                 return cond
         return None
 
+    def _mind(self, agent: Agent) -> tuple[str, MindConfig] | None:
+        """The condition that changed this agent's mind (it still uses the LLM), if any."""
+        if self._controller(agent) is not None:
+            return None
+        for name in agent.state.conditions:
+            cond = self._condition(name)
+            if cond and cond.mind is not None:
+                return name, cond.mind
+        return None
+
+    def _enforce_mind(self, agent: Agent, action: Action, tick: int) -> Action:
+        """What the scenario forbids a changed mind (speaking, some actions) becomes a wait."""
+        found = self._mind(agent)
+        if not found:
+            return action
+        name, mind = found
+        kind = str(action.parameters.get("name") or "") if action.type == ActionType.CUSTOM else ""
+        kind = kind or action.type.value
+        if kind == "wait":
+            return action
+        if not mind.speech and action.type in SPEECH_ACTIONS:
+            why = "can't communicate"
+        elif mind.actions and kind not in mind.actions:
+            why = f"can't {kind}"
+        else:
+            return action
+        agent.observe(f"I tried to {action.describe()}, but I {why}: I am {name}.", tick,
+                      importance=0.4)
+        reason = f"{why.capitalize()} ({name}). {action.reasoning}".strip()
+        return Action(type=ActionType.WAIT, reasoning=reason)
+
     def _rule_condition_name(self, agent: Agent) -> str:
         for name in agent.state.conditions:
             cond = self._condition(name)
@@ -44,6 +80,8 @@ class ConditionsMixin:
     def _meets(self, agent: Agent, req: Requirement) -> bool:
         held = agent.state.conditions
         if any(c not in held for c in req.conditions):
+            return False
+        if req.any_conditions and not any(c in held for c in req.any_conditions):
             return False
         if any(c in held for c in req.not_conditions):
             return False

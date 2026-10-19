@@ -94,6 +94,7 @@ class Requirement(BaseModel):
     """Who can do something / be the target of it. Every listed check must pass."""
 
     conditions: list[str] = Field(default_factory=list)  # must have all of these
+    any_conditions: list[str] = Field(default_factory=list)  # must have at least one of these
     not_conditions: list[str] = Field(default_factory=list)  # must have none of these
     professions: list[str] = Field(default_factory=list)  # any of these (substring match)
     items: dict[str, float] = Field(default_factory=dict)  # must carry at least this
@@ -149,6 +150,16 @@ class RulesConfig(BaseModel):
     wander: float = Field(0.3, ge=0.0, le=1.0)  # otherwise, chance to roam
 
 
+class MindConfig(BaseModel):
+    """A condition that turns the agent into someone else while the LLM keeps deciding for it."""
+
+    identity: str = ""  # who it is now; {name} and {profession} are replaced
+    goals: list[str] = Field(default_factory=list)  # replace the agent's own goals
+    speech: bool = True  # false: can't speak, whisper, invite, interact, trade or give
+    memories: bool = True  # false: forgets who it was (no memories, relationships, beliefs, plans)
+    actions: list[str] = Field(default_factory=list)  # if set, the only actions it may take
+
+
 class ConditionConfig(BaseModel):
     """A state an agent can be in: infected, injured, drunk, zombie, panicked…"""
 
@@ -160,6 +171,7 @@ class ConditionConfig(BaseModel):
     contagion: ContagionConfig | None = None
     controller: Literal["llm", "rules"] = "llm"
     rules: RulesConfig = Field(default_factory=RulesConfig)
+    mind: MindConfig | None = None  # with the LLM controller: a different identity and limits
     color: str = ""  # tint for UIs, e.g. "#7bc950"
 
     @field_validator("per_tick")
@@ -384,7 +396,8 @@ class SimulationConfig(BaseModel):
     def _check_references(self) -> "SimulationConfig":
         conds, acts = set(self.conditions), set(self.actions)
         builtin = {"move", "speak", "trade", "interact", "wait", "observe", "work", "rest", "post",
-                   "custom", "give", "take", "drop", "use", "accept", "decline"}
+                   "custom", "give", "take", "drop", "use", "accept", "decline",
+                   "whisper", "invite", "follow"}
         problems: list[str] = []
 
         def need(names, where: str) -> None:
@@ -398,9 +411,15 @@ class SimulationConfig(BaseModel):
             need(a.conditions, f"agent {a.name}")
         for name, item in self.items.items():
             need(item.cures, f"item {name}")
+        for name, cond in self.conditions.items():
+            t = cond.rules.targets
+            need(t.conditions + t.any_conditions + t.not_conditions, f"condition {name}")
+            if cond.mind:
+                problems.extend(f"condition {name} allows unknown action '{a}'"
+                                for a in cond.mind.actions if a not in builtin and a not in acts)
         for name, act in self.actions.items():
             for req in (act.who, act.target_requires):
-                need(req.conditions + req.not_conditions, f"action {name}")
+                need(req.conditions + req.any_conditions + req.not_conditions, f"action {name}")
             for out in (act.on_target, act.on_self):
                 need(out.add_conditions + out.remove_conditions, f"action {name}")
         from simcore.engine.effects import parse_effects
