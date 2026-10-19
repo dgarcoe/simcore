@@ -24,17 +24,113 @@ ACTION_ALIASES = {
 }
 
 
+_FENCE = re.compile(r"```(?:json)?\s*(.*?)(?:```|$)", re.DOTALL | re.IGNORECASE)
+_SMART_QUOTES = {0x201C: '"', 0x201D: '"', 0x201E: '"', 0x00AB: '"', 0x00BB: '"'}
+_LITERALS = {"True": "true", "False": "false", "None": "null"}
+
+
+def _scan_object(text: str) -> str | None:
+    """The first {...} in the text (braces inside strings ignored), closed if it was cut off."""
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(text)):
+        c = text[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    # Truncated answer (max tokens): close what is open.
+    return text[start:] + ('"' if in_str else "") + "}" * depth
+
+
+def _outside_strings(text: str, fix) -> str:
+    """Apply ``fix`` to the parts of the text that are not inside double-quoted strings."""
+    out, buf, in_str, esc = [], [], False, False
+    for c in text:
+        if in_str:
+            buf.append(c)
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+                out.append("".join(buf))
+                buf = []
+        elif c == '"':
+            out.append(fix("".join(buf)))
+            buf, in_str = [c], True
+        else:
+            buf.append(c)
+    out.append("".join(buf) if in_str else fix("".join(buf)))
+    return "".join(out)
+
+
+def _fix_segment(seg: str) -> str:
+    seg = re.sub(r"(//|#)[^\n]*", "", seg)  # comments
+    seg = re.sub(r"\b(True|False|None)\b", lambda m: _LITERALS[m.group(1)], seg)
+    # 'single quotes'
+    seg = re.sub(r"'([^'\n]*)'", lambda m: json.dumps(m.group(1), ensure_ascii=False), seg)
+    seg = re.sub(r"([{,]\s*)([A-Za-z_]\w*)(\s*:)", r'\1"\2"\3', seg)  # unquoted keys
+    seg = re.sub(r",(\s*[}\]])", r"\1", seg)  # trailing commas
+
+    def quote_value(m: re.Match) -> str:
+        value = m.group(2).strip()
+        if value in ("true", "false", "null"):
+            return m.group(0)
+        return f"{m.group(1)}{json.dumps(value, ensure_ascii=False)}{m.group(3)}"
+
+    # "target": Lola,  →  "target": "Lola",
+    return re.sub(r"(:\s*)([^\s\"{\[\d\-,}\]][^,\n}\]]*?)(\s*(?:[,\n}\]]|$))", quote_value, seg)
+
+
+def _load_json_object(text: str) -> dict:
+    """A JSON object from a model's answer: tolerates code fences, text around it, a cut-off
+    end and the usual small-model slips (unquoted values, smart quotes, True/None, comments,
+    trailing commas, single quotes). Raises json.JSONDecodeError / ValueError otherwise."""
+    text = (text or "").strip()
+    fence = _FENCE.search(text)
+    if fence and "{" in fence.group(1):
+        text = fence.group(1)
+    candidate = _scan_object(text) or text
+    try:
+        data = json.loads(candidate)
+    except json.JSONDecodeError as first:
+        repaired = _scan_object(_outside_strings(text.translate(_SMART_QUOTES), _fix_segment))
+        try:
+            data = json.loads(repaired or "")
+        except json.JSONDecodeError:
+            raise first from None
+    if not isinstance(data, dict):
+        raise ValueError("expected a JSON object")
+    return data
+
+
 def parse_plan(text: str) -> list[str]:
     """Steps from {"steps": [...]}, a JSON list, or numbered / bulleted lines."""
     text = text.strip()
     match = re.search(r"\{.*\}|\[.*\]", text, re.DOTALL)
     if match:
         try:
-            data = json.loads(match.group(0))
+            found = match.group(0)
+            data = _load_json_object(found) if found.startswith("{") else json.loads(found)
             steps = data.get("steps", []) if isinstance(data, dict) else data
             if isinstance(steps, list):
                 return [str(s).strip() for s in steps if str(s).strip()][:5]
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, ValueError):
             pass
     lines = [re.sub(r"^\s*(\d+[.)]|[-*•])\s*", "", line).strip() for line in text.splitlines()]
     return [line for line in lines if line][:5]
@@ -122,10 +218,16 @@ class LLMProvider:
         if self.cache and cache_key:
             cached = self.cache.get(cache_key)
             if cached:
-                self._cache_hits += 1
-                return self._parse_action(cached)
+                try:
+                    action = self._parse_action_strict(cached)
+                    self._cache_hits += 1
+                    return action
+                except (json.JSONDecodeError, ValueError):
+                    pass  # an unreadable answer cached by an older version: ask again
 
         max_retries = 5
+        max_parse_failures = 3  # unreadable answers get a fresh try, but not forever
+        parse_failures = 0
         last_error = None
 
         for attempt in range(1, max_retries + 1):
@@ -143,6 +245,7 @@ class LLMProvider:
                     max_tokens=self.max_tokens,
                     frequency_penalty=self.frequency_penalty,
                     presence_penalty=self.presence_penalty,
+                    **self._json_mode(),
                 )
 
                 #logger.warning(
@@ -170,20 +273,22 @@ class LLMProvider:
                     await asyncio.sleep(0.5 * attempt)
                     continue
 
-                # Validate JSON before caching
+                # Validate JSON before caching: only readable answers are cached.
                 try:
-                    action = self._parse_action(content)
-                except Exception as parse_error:
+                    action = self._parse_action_strict(content)
+                except (json.JSONDecodeError, ValueError) as parse_error:
                     last_error = f"Parse error: {parse_error}"
-
+                    parse_failures += 1
                     logger.warning(
-                        "Attempt %s/%s parse failed: %s",
+                        "Attempt %s/%s parse failed: %s. Content: %s",
                         attempt,
                         max_retries,
                         parse_error,
+                        content[:200],
                     )
-
-                    await asyncio.sleep(0.5 * attempt)
+                    if parse_failures >= max_parse_failures:
+                        break
+                    await asyncio.sleep(0.2)
                     continue
 
                 if self.cache and cache_key:
@@ -209,10 +314,18 @@ class LLMProvider:
             last_error,
         )
 
+        if last_error and last_error.startswith("Parse error:"):
+            return Action(type=ActionType.WAIT, reasoning=last_error)
         return Action(
             type=ActionType.WAIT,
             reasoning=f"LLM failed after {max_retries} attempts: {last_error}",
         )
+
+    def _json_mode(self) -> dict[str, Any]:
+        """Ollama can be told to answer with valid JSON only (its "format": "json")."""
+        if self.model.startswith(("ollama/", "ollama_chat/")):
+            return {"response_format": {"type": "json_object"}}
+        return {}
 
     async def decide_old(self, system_prompt: str, user_prompt: str) -> Action:
         """Ask the LLM to decide an agent's next action."""
@@ -400,45 +513,47 @@ class LLMProvider:
             return ""
 
     def _parse_action(self, content: str) -> Action:
-        """Parse LLM JSON response into an Action."""
+        """Parse LLM JSON response into an Action (a WAIT with the reason if it can't)."""
         try:
-            data = json.loads(content)
-            if not isinstance(data, dict):
-                raise ValueError("expected a JSON object")
-            raw_action = str(data.get("action", "wait")).strip()
-            params = dict(data["parameters"]) if isinstance(data.get("parameters"), dict) else {}
-            raw_action = ACTION_ALIASES.get(raw_action.lower(), raw_action)
-            try:
-                action_type = ActionType(raw_action.lower())
-            except ValueError:
-                if not raw_action or not raw_action.replace("_", "").replace("-", "").isalnum():
-                    raise
-                # Possibly a scenario action (bite, shoot…): the engine checks it exists.
-                action_type = ActionType.CUSTOM
-                params["name"] = raw_action.lower()
-
-            def field(key: str, default=""):
-                value = data.get(key, params.get(key))
-                return default if value is None else value
-
-            return Action(
-                type=action_type,
-                target=", ".join(map(str, field("target"))) if isinstance(field("target"), list)
-                else str(field("target")),
-                content=str(field("content")),
-                reasoning=str(field("reasoning")),
-                parameters=params,
-                item=str(field("item")).strip(),
-                amount=_amount(field("amount", 1)),
-                ask_item=str(field("ask_item")).strip(),
-                ask_amount=_amount(field("ask_amount", 1)),
-                share=str(field("share")).strip(),
-                place=str(field("place")).strip(),
-                plan_step_done=field("plan_step_done", False) in (True, "true", "yes", 1),
-            )
+            return self._parse_action_strict(content)
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"Failed to parse action: {e}. Content: {content[:200]}")
             return Action(type=ActionType.WAIT, reasoning=f"Parse error: {e}")
+
+    def _parse_action_strict(self, content: str) -> Action:
+        """Parse LLM JSON response into an Action; raises if it can't be read."""
+        data = _load_json_object(content)
+        raw_action = str(data.get("action", "wait")).strip()
+        params = dict(data["parameters"]) if isinstance(data.get("parameters"), dict) else {}
+        raw_action = ACTION_ALIASES.get(raw_action.lower(), raw_action)
+        try:
+            action_type = ActionType(raw_action.lower())
+        except ValueError:
+            if not raw_action or not raw_action.replace("_", "").replace("-", "").isalnum():
+                raise
+            # Possibly a scenario action (bite, shoot…): the engine checks it exists.
+            action_type = ActionType.CUSTOM
+            params["name"] = raw_action.lower()
+
+        def field(key: str, default=""):
+            value = data.get(key, params.get(key))
+            return default if value is None else value
+
+        return Action(
+            type=action_type,
+            target=", ".join(map(str, field("target"))) if isinstance(field("target"), list)
+            else str(field("target")),
+            content=str(field("content")),
+            reasoning=str(field("reasoning")),
+            parameters=params,
+            item=str(field("item")).strip(),
+            amount=_amount(field("amount", 1)),
+            ask_item=str(field("ask_item")).strip(),
+            ask_amount=_amount(field("ask_amount", 1)),
+            share=str(field("share")).strip(),
+            place=str(field("place")).strip(),
+            plan_step_done=field("plan_step_done", False) in (True, "true", "yes", 1),
+        )
 
     @property
     def stats(self) -> dict[str, Any]:
