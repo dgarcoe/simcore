@@ -370,6 +370,21 @@ events:
 - **Being ignored:** if a listener has 2 turns to answer and does something else, the speaker learns it is being ignored. It gets a note ("don't insist: ask someone else, go somewhere else or act on your own"), it remembers it, the relationship drops a little and it replans. The engine emits `speech_ignored` (`agent`, `by`, `text`, `turns`).
 - **Name matching:** names are found ignoring accents, case and titles (`padre julian`, `Julián` → `Padre Julián`).
 
+### The story of a run
+
+- **Key moments:** they are picked from the events as they happen.
+  - Scores: deaths 1.0, transformations 0.9, revealed secrets 0.8, world events and rules 0.7–0.9, arrivals, departures and reunions 0.5, rumors and people ignoring each other 0.3–0.4…
+  - The strong ones (≥ 0.7) are announced with a `story_moment` event.
+- **A chronicle** (optional, one LLM call per chapter):
+  ```yaml
+  simulation:
+    story: true
+    chapter_every: 24   # ticks per chapter (a day)
+  ```
+  - The narrator writes a titled chapter of 2–4 sentences from that period's moments (`story_chapter` event); a last chapter closes the run.
+  - The post-mortem (`POST /api/postmortem/narrative`) now builds its epilogue from the chapters, the key moments and how it ended.
+  - `GET /api/story` returns the chapters and the moments.
+
 ### Looking for someone
 
 Agents don't guess where someone is: looking for them is a goal that lasts several turns.

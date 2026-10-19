@@ -4,6 +4,7 @@ chapter by chapter by the LLM. Mixed into SimulationEngine."""
 from __future__ import annotations
 
 import logging
+
 from simcore.engine.events import EventType, SimEvent
 
 logger = logging.getLogger("simcore")
