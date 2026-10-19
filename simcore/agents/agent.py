@@ -146,7 +146,7 @@ Current situation:
 
 Decide your next action. Respond in this exact JSON format:
 {{
-    "action": "move|speak|interact|wait|observe|work|rest|give|take|drop|use|trade|accept|decline",
+    "action": "move|speak|whisper|invite|follow|interact|wait|observe|work|rest|give|take|drop|use|trade|accept|decline",
     "target": "<see target rules below>",
     "content": "<what you say or do>",
     "item": "<item name, only for give/take/drop/use/trade>",
@@ -154,6 +154,7 @@ Decide your next action. Respond in this exact JSON format:
     "ask_item": "<only for trade: what you want in return>",
     "ask_amount": 1,
     "share": "<optional, with speak/interact: something you believe or a secret you decide to tell them>",
+    "place": "<only for invite: where to meet; empty = a quiet place>",
     "plan_step_done": false,
     "reasoning": "<brief internal thought>"
 }}
@@ -170,6 +171,8 @@ Item rules:
 Target rules (strict):
 - For "move": target MUST be the exact name of an available location (not a person).
 - For "speak" and "interact": target is one or more people listed in "People here", e.g. "Ana" or "Ana, Bob", or "everyone" to address the whole room. Everyone here hears what you say with "speak" ("interact" is private).
+- "whisper": like "speak" but only the target hears the words (others just see you whisper).
+- "invite": you go to "place" and ask the target (people here) to join you there, to talk alone. "follow": go wherever the target (a person here) goes this turn.
 - For "trade", "give": target MUST be the exact name of a real person listed in "People here" above. NEVER a location name, shop name, building, or invented person. If "People here" is empty or "You are alone", you CANNOT speak/trade/interact — choose move, observe, work, or rest instead.
 - If several people are waiting for your answer, answer them all in one line (target "Ana, Bob").
 - Don't ask what someone here already asked or answered. If a conversation goes in circles, stop asking and act (move, work, give, use…) or say something new.

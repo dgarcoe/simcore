@@ -24,6 +24,10 @@ class ActionType(Enum):
     USE = "use"
     ACCEPT = "accept"
     DECLINE = "decline"
+    # Private talk
+    WHISPER = "whisper"
+    INVITE = "invite"
+    FOLLOW = "follow"
 
 
 ITEM_ACTIONS = frozenset({
@@ -50,7 +54,8 @@ class Action:
     ask_item: str = ""  # trade: what is asked in return
     ask_amount: float = 1
     share: str = ""  # speak / interact: a belief or secret told to the target (or a lie)
-    plan_step_done: bool = False  # the current step of the agent's plan is done
+    plan_step_done: bool = False
+    place: str = ""  # invite: where to meet  # the current step of the agent's plan is done
 
     def describe(self) -> str:
         """Human-readable description of the action."""
@@ -77,6 +82,13 @@ class Action:
                 return f"accepts the offer from {self.target}"
             case ActionType.DECLINE:
                 return f"declines the offer from {self.target}"
+            case ActionType.WHISPER:
+                return f'whispers to {self.target}: "{self.content}"'
+            case ActionType.INVITE:
+                words = f': "{self.content}"' if self.content else ""
+                return f"invites {self.target} to {self.place or 'somewhere quiet'}{words}"
+            case ActionType.FOLLOW:
+                return f"follows {self.target}"
             case ActionType.INTERACT:
                 return f"interacts with {self.target}: {self.content}"
             case ActionType.WORK:

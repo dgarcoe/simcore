@@ -31,6 +31,30 @@ class MockLLMProvider:
         action.plan_step_done = "Your plan for today" in user_prompt and self._rng.random() < 0.3
         return action
 
+    def _private_decision(self, user_prompt: str, nearby: list[str]) -> Action | None:
+        invite = re.search(r"^(.+?) asks you to come to (.+?)(?::|\. Go there)", user_prompt, re.MULTILINE)
+        if invite and self._rng.random() < 0.6:
+            return Action(type=ActionType.MOVE, target=invite.group(2).strip(),
+                          reasoning=f"{invite.group(1)} wants to talk to me alone")
+        if not nearby:
+            return None
+        secrets = _list_after(user_prompt, "Your secrets (")
+        roll = self._rng.random()
+        if len(nearby) == 1:
+            if secrets and roll < 0.25:
+                return Action(type=ActionType.WHISPER, target=nearby[0], content="Keep this between us.",
+                              share=self._rng.choice(secrets), reasoning="Nobody else can hear us")
+            if roll > 0.96:
+                return Action(type=ActionType.FOLLOW, target=nearby[0], reasoning="I'll stick with them")
+            return None
+        quiet = re.search(r"^Places with nobody there \(as far as you know\): (.+?)\.$", user_prompt, re.MULTILINE)
+        if quiet and roll < (0.3 if secrets else 0.05):
+            return Action(type=ActionType.INVITE, target=self._rng.choice(nearby),
+                          place=quiet.group(1).split(", ")[0],
+                          content="Come with me, I need to tell you something in private.",
+                          reasoning="Too many ears here")
+        return None
+
     async def decide(self, system_prompt: str, user_prompt: str) -> Action:
         self._call_count += 1
 
@@ -60,6 +84,11 @@ class MockLLMProvider:
         item_action = self._item_decision(user_prompt, nearby)
         if item_action:
             return item_action
+
+        # Private talk: accept invitations, take someone aside or whisper a secret.
+        private = self._private_decision(user_prompt, nearby)
+        if private:
+            return private
 
         # Answer the people waiting for a reply, all at once.
         waiting = [w.split(":", 1)[0] for w in _list_after(user_prompt, "Waiting for your answer:")]

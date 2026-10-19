@@ -369,6 +369,21 @@ events:
   - when it asks what someone here already asked, the note quotes that question and its answer.
 - **Name matching:** names are found ignoring accents, case and titles (`padre julian`, `Julián` → `Padre Julián`).
 
+### Situational awareness and private talk
+
+- **What each agent's prompt shows:**
+  - what each person here did last and whether they're hurt, or that they just arrived and from where;
+  - who left and where to;
+  - where everyone else was last seen;
+  - places it knows are empty;
+  - who will hear it if it speaks.
+- **How much agents know:** `simulation.awareness: local` (the default) gives them only what they saw themselves. `full` tells them where everyone is.
+- **Private talk:**
+  - `whisper`: like `speak`, but only the targets hear the words; others only see a whisper happen.
+  - `invite`: `{"action": "invite", "target": "Bob", "place": "Barn", "content": "Come, alone"}`. The inviter goes to the place and the invitation sits in Bob's prompt for 3 ticks. Bob decides whether to go, and the inviter knows it is waiting for him. If no place is given, the first empty place the inviter knows of is used.
+  - `follow`: resolved after everyone has decided, so the follower ends up wherever the leader went that tick. It respects closed places and access rules.
+- **Spanish and Portuguese aliases:** `susurrar`, `invitar` and `seguir` are also accepted.
+
 ## LLM Providers
 
 SimCore uses [LiteLLM](https://github.com/BerriAI/litellm) — any provider it supports works here:

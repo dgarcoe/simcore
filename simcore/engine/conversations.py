@@ -172,6 +172,11 @@ class ConversationsMixin:
             prev = box.get(agent.name)
             count = prev["count"] + 1 if prev and _similar(prev["text"], text) else 1
             box[agent.name] = {"text": text, "count": count, "tick": tick}
+        if action.type == ActionType.WHISPER:
+            for other in self.living_agents:
+                if other.id != agent.id and other not in targets and other.location == agent.location:
+                    other.observe(f"I saw {agent.name} whisper something to {', '.join(names)}.", tick,
+                                  importance=0.3)
         if public:
             to = ", ".join(names)
             for other in self.living_agents:

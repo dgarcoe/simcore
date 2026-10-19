@@ -16,6 +16,14 @@ from simcore.llm.cache import ResponseCache
 logger = logging.getLogger("simcore.llm")
 
 
+# Common names models use for the private-talk actions.
+ACTION_ALIASES = {
+    "susurrar": "whisper", "sussurrar": "whisper", "whisper_to": "whisper", "murmurar": "whisper",
+    "invitar": "invite", "convidar": "invite", "invite_to": "invite", "take_aside": "invite",
+    "seguir": "follow", "follow_me": "follow", "follow_to": "follow",
+}
+
+
 def parse_plan(text: str) -> list[str]:
     """Steps from {"steps": [...]}, a JSON list, or numbered / bulleted lines."""
     text = text.strip()
@@ -399,6 +407,7 @@ class LLMProvider:
                 raise ValueError("expected a JSON object")
             raw_action = str(data.get("action", "wait")).strip()
             params = dict(data["parameters"]) if isinstance(data.get("parameters"), dict) else {}
+            raw_action = ACTION_ALIASES.get(raw_action.lower(), raw_action)
             try:
                 action_type = ActionType(raw_action.lower())
             except ValueError:
@@ -424,6 +433,7 @@ class LLMProvider:
                 ask_item=str(field("ask_item")).strip(),
                 ask_amount=_amount(field("ask_amount", 1)),
                 share=str(field("share")).strip(),
+                place=str(field("place")).strip(),
                 plan_step_done=field("plan_step_done", False) in (True, "true", "yes", 1),
             )
         except (json.JSONDecodeError, ValueError) as e:

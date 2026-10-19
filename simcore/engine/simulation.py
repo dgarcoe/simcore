@@ -13,6 +13,7 @@ from simcore.agents.agent import Agent, AgentState
 from simcore.agents.persona import Persona, PersonalityTraits
 from simcore.config.schema import AgentConfig, SimulationConfig
 from simcore.engine.clock import SimClock
+from simcore.engine.awareness import AwarenessMixin
 from simcore.engine.conditions import ConditionsMixin
 from simcore.engine.conversations import ConversationsMixin
 from simcore.engine.minds import MindsMixin
@@ -57,7 +58,7 @@ def _has(inv: dict[str, float], item: str, amount: float) -> bool:
     return bool(item) and inv.get(item, 0) + 1e-9 >= amount
 
 
-class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin):
+class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -73,6 +74,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self.end_message = ""
         self._fired_rules: set[int] = set()
         self._init_conversations()
+        self._init_awareness()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -285,15 +287,19 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._rng.shuffle(agent_list)  # randomize order each tick
 
         # Gather decisions in parallel
+        self._see_around(tick)
         decisions = await asyncio.gather(*[
             self._agent_turn(agent, tick) for agent in agent_list
         ])
+        await self._resolve_follows(tick)
 
         # Resolve interactions
         for agent, action in zip(agent_list, decisions):
-            if action and action.type in (ActionType.SPEAK, ActionType.INTERACT):
+            if action and action.type in (ActionType.SPEAK, ActionType.INTERACT, ActionType.WHISPER):
+                said = action if action.type != ActionType.WHISPER else Action(
+                    type=ActionType.SPEAK, target=action.target, content=action.content)
                 for target in self._addressees(agent, action):
-                    result = self.interaction_resolver.resolve(agent, target, action, tick)
+                    result = self.interaction_resolver.resolve(agent, target, said, tick)
                     # Skip INTERACTION event for SPEAK — AGENT_SPEAK already
                     # emitted the same line, no need to duplicate.
                     if result and action.type != ActionType.SPEAK:
@@ -339,6 +345,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             action = await self.llm.decide(persona_prompt, prompt)
 
         # Apply action
+        origin = agent.location
         if action.type == ActionType.MOVE:
             target_loc = self.environment.get_location(action.target or "")
             allowed, why = self._can_enter(agent, target_loc) if target_loc else (True, "")
@@ -364,19 +371,26 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             action = await self._apply_item_action(agent, action, tick)
         elif action.type == ActionType.CUSTOM:
             action = await self._apply_custom_action(agent, action, tick)
-        elif action.type in (ActionType.SPEAK, ActionType.INTERACT):
+        elif action.type == ActionType.INVITE:
+            action = await self._apply_invite(agent, action, tick)
+        elif action.type == ActionType.FOLLOW:
+            action = self._apply_follow(agent, action, tick)
+        elif action.type in (ActionType.SPEAK, ActionType.INTERACT, ActionType.WHISPER):
             action = self._check_speech(agent, action)
             if action.type != ActionType.WAIT:
                 self._record_speech(agent, action, tick)
 
         agent.apply_action(action, tick)
+        if action.type == ActionType.MOVE and agent.location != origin:
+            self._note_move(agent, origin, agent.location, tick)
+        self._note_doing(agent, action, tick)
         if action.type == ActionType.WORK:
             await self._produce(agent, tick)
         await self._satisfy_by_action(agent, action, tick)
         await self._after_action_minds(agent, action, tick)
         if self.config.conditions and action.target and action.type in (
-                ActionType.SPEAK, ActionType.INTERACT, ActionType.GIVE, ActionType.TRADE,
-                ActionType.ACCEPT, ActionType.USE, ActionType.CUSTOM):
+                ActionType.SPEAK, ActionType.INTERACT, ActionType.WHISPER, ActionType.GIVE,
+                ActionType.TRADE, ActionType.ACCEPT, ActionType.USE, ActionType.CUSTOM):
             for other in self._addressees(agent, action):
                 await self._spread_by_interaction(agent, other, tick)
 
@@ -397,6 +411,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 "target": action.target,
                 "content": action.content,
                 **({"targets": action.parameters["targets"]} if action.parameters.get("targets") else {}),
+                **({"place": action.place, "from": action.parameters.get("from", "")}
+                   if action.type == ActionType.INVITE else {}),
                 **({"item": action.item, "amount": action.amount} if action.item else {}),
                 **({"name": action.parameters.get("name"), "success": action.parameters.get("success", True)}
                    if action.type == ActionType.CUSTOM and action.parameters.get("name") else {}),
@@ -457,7 +473,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             if extra:
                 observation += "\n" + extra
         for extra in (self._needs_prompt(agent), self._places_prompt(), self._minds_prompt(agent),
-                      self._conversation_prompt(agent, tick)):
+                      self._awareness_prompt(agent, tick), self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
         guide = self._item_guide(set(agent.state.resources) | set(stock))
