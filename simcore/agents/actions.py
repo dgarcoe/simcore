@@ -28,6 +28,7 @@ class ActionType(Enum):
     WHISPER = "whisper"
     INVITE = "invite"
     FOLLOW = "follow"
+    FIND = "find"  # look for someone who isn't here
 
 
 ITEM_ACTIONS = frozenset({
@@ -89,6 +90,8 @@ class Action:
                 return f"invites {self.target} to {self.place or 'somewhere quiet'}{words}"
             case ActionType.FOLLOW:
                 return f"follows {self.target}"
+            case ActionType.FIND:
+                return f"looks for {self.target}"
             case ActionType.INTERACT:
                 return f"interacts with {self.target}: {self.content}"
             case ActionType.WORK:

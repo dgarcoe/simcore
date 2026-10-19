@@ -370,6 +370,27 @@ events:
 - **Being ignored:** if a listener has 2 turns to answer and does something else, the speaker learns it is being ignored. It gets a note ("don't insist: ask someone else, go somewhere else or act on your own"), it remembers it, the relationship drops a little and it replans. The engine emits `speech_ignored` (`agent`, `by`, `text`, `turns`).
 - **Name matching:** names are found ignoring accents, case and titles (`padre julian`, `Julián` → `Padre Julián`).
 
+### Looking for someone
+
+Agents don't guess where someone is: looking for them is a goal that lasts several turns.
+
+- **Starting:** `{"action": "find", "target": "Tomás", "content": "to warn him about the well"}`, or simply
+  speaking, whispering or inviting someone who isn't here (the words are kept for when they meet).
+  Aliases: `buscar`, `search`, `look_for`.
+- **Each turn of `find` does something useful:**
+  - if there are people here who haven't been asked, it **asks them** ("Has anyone seen Tomás?", a
+    public line everyone hears) and keeps what they know (where and when they last saw him);
+  - otherwise it **goes to the best place not checked since**: the freshest clue (its own or someone
+    else's), then where the person usually is (their starting place), then any other open place.
+- **Ending:**
+  - **found:** they meet, whoever moved; the prompt then reminds the seeker what they wanted to say;
+  - **gave up:** after 8 ticks or when there is nowhere left to look;
+  - **lost:** the person died or left.
+- **In the prompt:** "You are looking for Tomás (…). Clues: Ana saw them at Iglesia (2 ticks ago).
+  Already checked: Granja, Taberna. Use "find"…".
+- **Events and state:** each step emits `agent_search` (`agent`, `target`, `step` = started / asked /
+  moved / found / gave_up / lost, `place`, `clues`), and the state shows each agent's `search`.
+
 ### Conditions that change an agent's mind
 
 A condition can turn an agent into someone else **while the LLM keeps deciding** for it, as a different

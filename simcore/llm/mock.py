@@ -31,6 +31,23 @@ class MockLLMProvider:
         action.plan_step_done = "Your plan for today" in user_prompt and self._rng.random() < 0.3
         return action
 
+    def _search_decision(self, prompt: str, nearby: list[str]) -> Action | None:
+        found = re.search(r"You found (.+?): they are here\.(?: You wanted to tell them: \"(.*?)\"\.)?", prompt)
+        if found and found.group(1) in nearby:
+            return Action(type=ActionType.SPEAK, target=found.group(1),
+                          content=found.group(2) or f"{found.group(1)}, I was looking for you!",
+                          reasoning="Finally, there they are")
+        looking = re.search(r'Use "find" with target "(.+?)"', prompt)
+        if looking and self._rng.random() < 0.7:
+            return Action(type=ActionType.FIND, target=looking.group(1), reasoning="I have to find them")
+        if not nearby and not looking and self._rng.random() < 0.05:
+            people = self._extract_list(prompt, "All people who exist in this world: ")
+            if people:
+                who = self._rng.choice(people)
+                return Action(type=ActionType.FIND, target=who, content="to see how they are doing",
+                              reasoning=f"I haven't seen {who} in a while")
+        return None
+
     def _mute_decision(self, prompt: str, nearby: list[str], location: str) -> Action:
         special = self._special_decision(prompt, nearby, chance=0.85)
         if special:
@@ -114,6 +131,11 @@ class MockLLMProvider:
         private = self._private_decision(user_prompt, nearby)
         if private:
             return private
+
+        # Looking for someone: talk to them once found, keep looking, or start looking.
+        search = self._search_decision(user_prompt, nearby)
+        if search:
+            return search
 
         # Answer the people waiting for a reply, all at once.
         waiting = [w.split(":", 1)[0] for w in _list_after(user_prompt, "Waiting for your answer:")]

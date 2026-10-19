@@ -21,6 +21,7 @@ ACTION_ALIASES = {
     "susurrar": "whisper", "sussurrar": "whisper", "whisper_to": "whisper", "murmurar": "whisper",
     "invitar": "invite", "convidar": "invite", "invite_to": "invite", "take_aside": "invite",
     "seguir": "follow", "follow_me": "follow", "follow_to": "follow",
+    "buscar": "find", "search": "find", "look_for": "find", "find_person": "find", "procurar": "find",
 }
 
 

@@ -55,7 +55,7 @@ def test_speak_to_several_people_and_everyone():
     assert a.parameters["targets"] == ["Bob"]
     a = say(e, "ana", "todos")
     assert sorted(a.parameters["targets"]) == ["Bob", "Carla", "Padre Julián"]
-    assert say(e, "ana", "Tomás").type == ActionType.WAIT
+    assert say(e, "ana", "Tomás").type == ActionType.FIND  # not here: goes to look for him
 
 
 def test_tolerant_names():

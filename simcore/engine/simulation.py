@@ -17,6 +17,7 @@ from simcore.engine.awareness import AwarenessMixin
 from simcore.engine.conditions import ConditionsMixin
 from simcore.engine.conversations import ConversationsMixin
 from simcore.engine.minds import MindsMixin
+from simcore.engine.search import SearchMixin
 from simcore.engine.world import WorldMixin
 from simcore.engine.effects import ALL, LOCATION_PREFIX, Effects, parse_effects
 from simcore.engine.events import EventBus, EventType, SimEvent
@@ -58,7 +59,8 @@ def _has(inv: dict[str, float], item: str, amount: float) -> bool:
     return bool(item) and inv.get(item, 0) + 1e-9 >= amount
 
 
-class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin):
+class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin,
+                       SearchMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -75,6 +77,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._fired_rules: set[int] = set()
         self._init_conversations()
         self._init_awareness()
+        self._init_search()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -288,6 +291,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
 
         # Gather decisions in parallel
         self._see_around(tick)
+        await self._searches_tick(tick)
         decisions = await asyncio.gather(*[
             self._agent_turn(agent, tick) for agent in agent_list
         ])
@@ -374,6 +378,15 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             action = await self._apply_item_action(agent, action, tick)
         elif action.type == ActionType.CUSTOM:
             action = await self._apply_custom_action(agent, action, tick)
+        elif action.type == ActionType.FIND:
+            action = await self._apply_find(agent, action, tick)
+        elif (action.type in (ActionType.SPEAK, ActionType.WHISPER, ActionType.INVITE)
+              and (absent := self._absent_person(agent, action.target))):
+            # Talking to someone who isn't here: go and find them instead of wasting the turn.
+            said = action.content
+            action = await self._apply_find(
+                agent, Action(type=ActionType.FIND, target=absent.name, reasoning=action.reasoning,
+                              content=f"to tell them: {said}" if said else ""), tick, message=said)
         elif action.type == ActionType.INVITE:
             action = await self._apply_invite(agent, action, tick)
         elif action.type == ActionType.FOLLOW:
@@ -382,6 +395,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             action = self._check_speech(agent, action)
             if action.type != ActionType.WAIT:
                 self._record_speech(agent, action, tick)
+                self._search_answered(agent, list(action.parameters.get("targets") or []))
 
         agent.apply_action(action, tick)
         if action.type == ActionType.MOVE and agent.location != origin:
@@ -417,6 +431,9 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 **({"targets": action.parameters["targets"]} if action.parameters.get("targets") else {}),
                 **({"place": action.place, "from": action.parameters.get("from", "")}
                    if action.type == ActionType.INVITE else {}),
+                **({"step": action.parameters.get("step", ""), "place": action.parameters.get("place", ""),
+                    "from": action.parameters.get("from", "")}
+                   if action.type == ActionType.FIND else {}),
                 **({"item": action.item, "amount": action.amount} if action.item else {}),
                 **({"name": action.parameters.get("name"), "success": action.parameters.get("success", True)}
                    if action.type == ActionType.CUSTOM and action.parameters.get("name") else {}),
@@ -482,6 +499,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         for extra in (self._needs_prompt(agent), self._places_prompt(),
                       "" if forgets else self._minds_prompt(agent),
                       self._awareness_prompt(agent, tick, speech=not mute),
+                      "" if forgets else self._search_prompt(agent, tick),
                       "" if mute else self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
@@ -923,6 +941,9 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
 
     def _agent_state(self, agent: Agent) -> dict:
         data = agent.to_dict()
+        search = self._search_state(agent)
+        if search:
+            data["search"] = search
         found = self._mind(agent)
         if found:
             name, mind = found

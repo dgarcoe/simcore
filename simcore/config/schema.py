@@ -397,7 +397,7 @@ class SimulationConfig(BaseModel):
         conds, acts = set(self.conditions), set(self.actions)
         builtin = {"move", "speak", "trade", "interact", "wait", "observe", "work", "rest", "post",
                    "custom", "give", "take", "drop", "use", "accept", "decline",
-                   "whisper", "invite", "follow"}
+                   "whisper", "invite", "follow", "find"}
         problems: list[str] = []
 
         def need(names, where: str) -> None:
