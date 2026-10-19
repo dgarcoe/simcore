@@ -138,7 +138,11 @@ class StoryMixin:
         return out
 
     def _top_moments(self, start: int, end: int, limit: int = CHAPTER_MOMENTS) -> list[dict]:
-        span = [m for m in self._moments if start <= m["tick"] <= end]
+        span, seen = [], set()
+        for m in self._moments:  # the same thing told twice (a rule and its effect) counts once
+            if start <= m["tick"] <= end and m["text"] not in seen:
+                seen.add(m["text"])
+                span.append(m)
         best = sorted(span, key=lambda m: -m["importance"])[:limit]
         return sorted(best, key=lambda m: m["tick"])
 

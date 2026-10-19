@@ -357,9 +357,10 @@ class MockLLMProvider:
                         language: str = "en") -> tuple[str, str]:
         self._call_count += 1
         texts = [re.sub(r"^\[t\d+\] ", "", m) for m in moments]
-        title = texts[-1].split(":")[0][:40] if texts else "A quiet day"
+        title = texts[-1].split(":")[0].rstrip(".")[:48] if texts else "A quiet day"
         body = ". ".join(t.rstrip(".") for t in texts[:4]) + "." if texts else "Nothing worth telling happened."
-        return f"Chapter {len(previous) + 1}: {title}", body
+        word = {"es": "Capítulo", "pt": "Capítulo"}.get(language, "Chapter")
+        return f"{word} {len(previous) + 1}: {title}", body
 
     async def generate_narrative(self, data: dict, language: str = "en") -> str:
         self._call_count += 1
