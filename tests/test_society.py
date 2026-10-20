@@ -287,3 +287,21 @@ def test_configured_vote_from_tick_and_once():
     asyncio.run(e._society_tick(6))
     assert "Matters you can put" not in e._build_observation(ag(e, "lola"), 6)
     assert act(e, "lola", 6, type=ActionType.CALL_VOTE, content="cerrar").type == ActionType.WAIT
+
+
+def test_join_ignores_invites_to_dissolved_groups():
+    e = make_engine()
+    lola = ag(e, "lola")
+    e._group_invites[lola.name] = {"Gone group": "Bob"}
+    asyncio.run(e._apply_join(lola, Action(type=ActionType.JOIN, target="Los de X. Mood: x"), 1))
+    assert "Gone group" not in e._group_invites[lola.name]
+    assert e._faction_of(lola.name) == "Guardia"  # still in her own group, no crash
+
+
+def test_mock_reads_the_location_name_only():
+    from simcore.llm.mock import MockLLMProvider
+
+    m = MockLLMProvider()
+    p = "Current state: You are at Iglesia. Mood: positive. Energy: ok. Later (note) here."
+    assert m._extract_location(p) == "Iglesia"
+    assert m._extract_location("You are at Plaza (busy). x") == "Plaza"

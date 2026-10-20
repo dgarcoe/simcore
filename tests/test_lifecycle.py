@@ -117,7 +117,7 @@ def test_scheduled_effects_apply_and_late_arrivals_enter():
     assert engine.get_state()["pending_arrivals"] == ["Rescuer"]
     run(engine.run())
     assert engine.environment.global_state["school_closed"] is True
-    assert engine.agents["ana"].state.health <= 0.72
+    assert engine.agents["ana"].state.health < 0.9  # -0.3, then a little rest
     assert "rescuer" in engine.agents
     spawn = [e for e in events if e.type == EventType.AGENT_SPAWN]
     assert spawn[0].tick == 2

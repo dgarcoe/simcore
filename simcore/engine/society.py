@@ -238,7 +238,9 @@ class SocietyMixin:
     async def _apply_join(self, agent: Agent, action: Action, tick: int) -> Action:
         wanted = (action.target or action.content or "").strip()
         faction = next((f for f in self._factions if _plain(f) == _plain(wanted)), "")
-        invites = self._group_invites.get(agent.name, {})
+        invites = self._group_invites.setdefault(agent.name, {})
+        for gone in [f for f in invites if f not in self._factions]:
+            del invites[gone]  # the group dissolved since
         if not faction and len(invites) == 1:
             faction = next(iter(invites))
         if not faction:

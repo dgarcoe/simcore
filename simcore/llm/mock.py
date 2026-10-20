@@ -440,11 +440,8 @@ class MockLLMProvider:
         return self._rng.choice(reflections)
 
     def _extract_location(self, prompt: str) -> str:
-        if "You are at " in prompt:
-            start = prompt.index("You are at ") + 11
-            end = prompt.index(" (", start) if " (" in prompt[start:] else prompt.index(".", start)
-            return prompt[start:end]
-        return ""
+        found = re.search(r"You are at (.+?)(?: \(|\.(?:\s|$))", prompt)
+        return found.group(1) if found else ""
 
     def _extract_nearby(self, prompt: str) -> list[str]:
         if "People here: " in prompt:
