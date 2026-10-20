@@ -45,6 +45,8 @@ class EventType(Enum):
     FACTION_CHANGE = "faction_change"
     VOTE_CALLED = "vote_called"
     VOTE_RESULT = "vote_result"
+    DICE_ROLL = "dice_roll"
+    LEVEL_UP = "level_up"
 
 
 @dataclass

@@ -323,9 +323,17 @@ class SocietyMixin:
         if ammo:
             agent.state.resources[ammo] = agent.state.resources.get(ammo, 0) - 1
         threat = self._is_threat(victim, tick)
-        hit = self._rng.random() < chance
+        hit, critical, fumble = await self._attack_roll(agent, victim, item, chance, tick)
+        if critical:
+            damage = min(1.0, damage * 2)
+        if fumble:  # hurt yourself, or waste a round of ammo
+            if ammo and agent.state.resources.get(ammo, 0) >= 1:
+                agent.state.resources[ammo] -= 1
+            else:
+                agent.state.health = max(0.0, agent.state.health - 0.05)
         with_what = f" with the {item}" if item else ""
-        params = {"weapon": item, "damage": 0.0, "killed": False, "hit": hit}
+        params = {"weapon": item, "damage": 0.0, "killed": False, "hit": hit,
+                  "critical": critical, "fumble": fumble}
         if hit:
             victim.state.health = max(0.0, victim.state.health - damage)
             params["damage"] = round(damage, 2)
@@ -349,6 +357,8 @@ class SocietyMixin:
         if hit and victim.state.health <= 0:
             params["killed"] = True
             await self.kill(victim, tick, f"{agent.name}{with_what}")
+            if threat:
+                await self._gain_xp(agent, 30, tick)
         action.target = victim.name
         action.parameters = {**(action.parameters or {}), **params}
         return action
@@ -377,6 +387,17 @@ class SocietyMixin:
             return await self._refuse(agent, action, tick, f"{target} is not here")
         before = patient.state.health
         item = self._healing_item(agent, patient)
+        if not item and not self._is_healer(agent):
+            return await self._refuse(
+                agent, action, tick, "I have nothing to heal with and I'm no healer"
+            )
+        factor = await self._heal_roll(agent, bool(item), patient, tick)
+        if factor == 0.0:
+            agent.observe(f"I tried to treat {patient.name}, but I botched it.", tick, importance=0.5)
+            action.target = "" if patient is agent else patient.name
+            action.parameters = {**(action.parameters or {}), "healed": 0.0, "with": item or "care",
+                                 "fumble": True}
+            return action
         if item:
             used = await self._apply_item_action(
                 agent, Action(type=ActionType.USE, item=item, target=patient.name), tick
@@ -391,12 +412,12 @@ class SocietyMixin:
             if patient is not agent:
                 patient.observe(f"{agent.name} treated my wounds.", tick, importance=0.7)
                 patient.memory.update_relationship(agent.name, 0.15, tick, "treated my wounds")
-        else:
-            return await self._refuse(
-                agent, action, tick, "I have nothing to heal with and I'm no healer"
-            )
+        if factor != 1.0:  # the dice made it better or worse than usual
+            gained = patient.state.health - before
+            patient.state.health = max(0.0, min(1.0, before + gained * factor))
         if patient is not agent:
             self._rep(agent.name, 0.1)
+            await self._gain_xp(agent, 15, tick)
             self._owe(patient.name, agent.name, "being healed", tick)
             self._feel(patient, "relieved", agent.name, tick)
         action.target = "" if patient is agent else patient.name
@@ -574,6 +595,8 @@ class SocietyMixin:
                     },
                 )
             )
+            if winner and (caller := self._find_agent_by_name(vote["caller"])):
+                await self._gain_xp(caller, 10, tick)
             cfg = self.config.votes.get(vote["id"])
             if cfg and winner and cfg.once:
                 self._decided.add(vote["id"])

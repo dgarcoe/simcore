@@ -370,6 +370,38 @@ events:
 - **Being ignored:** if a listener has 2 turns to answer and does something else, the speaker learns it is being ignored. It gets a note ("don't insist: ask someone else, go somewhere else or act on your own"), it remembers it, the relationship drops a little and it replans. The engine emits `speech_ignored` (`agent`, `by`, `text`, `turns`).
 - **Name matching:** names are found ignoring accents, case and titles (`padre julian`, `Julián` → `Padre Julián`).
 
+### Role-playing rules (attributes, d20 checks, experience, levels)
+
+With `simulation.rpg: true`, agents become role-playing characters. Without it, nothing changes.
+
+```yaml
+agents:
+  - name: Sargento Ortega
+    attributes: {strength: 15, dexterity: 12, constitution: 14, wisdom: 12, charisma: 11}
+    skills: [athletics, intimidation]
+    level: 2
+```
+
+**Characters:**
+- **Attributes:** strength, dexterity, constitution, intelligence, wisdom and charisma, from 1 to 20 (modifier = (value − 10) // 2). Missing ones are derived from the personality and profession.
+- **Skills:** athletics, intimidation, stealth, sleight_of_hand, medicine, perception, insight, investigation, persuasion and deception. Proficiency adds +2 (+1 every 4 levels), and professions grant sensible defaults.
+
+**Checks:** d20 + modifiers against a DC or another agent's roll. A natural 20 is a critical (it always succeeds and doubles the effect); a natural 1 is a fumble (it always fails). Checks are used for:
+- **`attack`:** strength (dexterity for `weapon.ranged`) + athletics against 10 + DEX + `armor` of the items the target carries. A critical does double damage; a fumble wastes ammo or hurts the attacker.
+- **`heal`:** wisdom (medicine), DC 10 with an item and 12 without. A critical heals ×1.5, a failure half, a fumble nothing.
+- **Scenario actions:** `check: {attribute, skill, dc}` or opposed with `against: constitution` replaces `chance`.
+- **Speech with `"intent"`:** persuade, deceive or intimidate, against the listener's insight. A lie that is seen through isn't believed, sours the relationship and, with witnesses, costs reputation.
+- **`find`:** when nobody can help, a perception check (DC 12) may find tracks.
+
+**Experience:**
+- XP comes from passed checks (more for harder ones and criticals), healing someone, killing a threat, finding someone, winning a vote you called, completing plan steps and surviving the night.
+- Levels come at 100, 250, 450, 700… XP. Each level adds +1 to the most-used attribute and a little health; levels 3 and 5 add a new skill (the one tried most).
+
+**Prompt, events and state:**
+- The prompt shows the character sheet and rough odds.
+- Events: `dice_roll` and `level_up`.
+- Each agent's state has an `rpg` entry: level, xp, next, attributes, skills and proficiency.
+
 ### Society: attack and heal, groups, votes, reputation, favors, routines, emotions
 
 **Built-in actions:**

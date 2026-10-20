@@ -147,6 +147,9 @@ class SearchMixin:
                 if seen and (o.name not in search["clues"] or search["clues"][o.name][1] < seen[1]):
                     search["clues"][o.name] = (seen[0], seen[1])
                     told.append(f"{o.name} saw {target.name} at {seen[0]} ({_ago(tick, seen[1])})")
+            if not told and await self._track_roll(agent, target, tick):
+                search["clues"]["tracks"] = (target.location, tick)
+                told.append(f"I found signs that {target.name} went to {target.location}")
             agent.observe(
                 ("; ".join(told) + ".") if told else f"Nobody here has seen {target.name}.",
                 tick,
@@ -208,6 +211,7 @@ class SearchMixin:
             return
         search["found"] = tick
         agent.observe(f"I found {search['target']}.", tick, importance=0.7)
+        await self._gain_xp(agent, 10, tick)
         target = self._find_agent_by_name(search["target"])
         if target is not None:
             target.observe(f"{agent.name} was looking for me and found me.", tick, importance=0.5)

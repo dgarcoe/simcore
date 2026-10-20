@@ -196,6 +196,7 @@ Decide your next action. Respond in this exact JSON format:
     "goal": "<only for found_group: what the group is for>",
     "options": ["<only for call_vote: the choices>"],
     "emotion": "<optional: how you feel now, e.g. calm, afraid, angry, sad, happy, hopeful>",
+    "intent": "<optional, with speak/whisper: persuade, deceive or intimidate>",
     "plan_step_done": false,
     "reasoning": "<brief internal thought>"
 }}

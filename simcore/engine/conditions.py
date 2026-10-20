@@ -262,7 +262,7 @@ class ConditionsMixin:
             if agent.state.resources[item] <= 1e-9:
                 agent.state.resources.pop(item)
 
-        success = self._rng.random() < act.chance
+        success = await self._action_roll(agent, target, act, name, tick)
         tname = target.name if target else ""
         template = (act.message if success else act.fail_message) or (
             f"{name} {tname}".strip() if success else f"tries to {name} {tname} but fails".strip())

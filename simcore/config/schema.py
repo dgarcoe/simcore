@@ -39,6 +39,33 @@ class AgentConfig(BaseModel):
     secrets: list[str] = Field(default_factory=list)
     # Group the agent starts in (see SimulationConfig.factions).
     faction: str = ""
+    # Role-playing (simulation.rpg): attributes 1..20 (missing ones derived from personality and
+    # profession), proficient skills and starting level.
+    attributes: dict[str, int] = Field(default_factory=dict)
+    skills: list[str] = Field(default_factory=list)
+    level: int = Field(1, ge=1, le=20)
+
+    @field_validator("attributes")
+    @classmethod
+    def _check_attributes(cls, value: dict[str, int]) -> dict[str, int]:
+        from simcore.engine.rpg import ATTRIBUTES
+
+        for k, v in value.items():
+            if k not in ATTRIBUTES:
+                raise ValueError(f"unknown attribute '{k}' (use {', '.join(ATTRIBUTES)})")
+            if not 1 <= v <= 20:
+                raise ValueError(f"attribute {k} must be between 1 and 20")
+        return value
+
+    @field_validator("skills")
+    @classmethod
+    def _check_skills(cls, value: list[str]) -> list[str]:
+        from simcore.engine.rpg import SKILLS
+
+        unknown = [s for s in value if s not in SKILLS]
+        if unknown:
+            raise ValueError(f"unknown skill(s) {', '.join(unknown)} (use {', '.join(SKILLS)})")
+        return value
 
 
 class RelationshipConfig(BaseModel):
@@ -76,6 +103,7 @@ class WeaponConfig(BaseModel):
     damage: float = Field(0.4, ge=0.0, le=1.0)  # health taken from the victim on a hit
     chance: float = Field(0.7, ge=0.0, le=1.0)  # probability of hitting
     ammo: str = ""  # item spent on each attack (cartridges, arrows…)
+    ranged: bool = False  # rpg: aimed with dexterity instead of strength
 
 
 class ItemConfig(BaseModel):
@@ -90,6 +118,8 @@ class ItemConfig(BaseModel):
     cures: list[str] = Field(default_factory=list)
     # Makes "attack" stronger: {damage, chance, ammo}.
     weapon: WeaponConfig | None = None
+    # rpg: added to the defense of whoever carries it (a vest, a shield).
+    armor: int = Field(0, ge=0, le=10)
 
     @field_validator("on_use")
     @classmethod
@@ -127,6 +157,28 @@ class Outcome(BaseModel):
                     or self.remove_conditions or self.items or self.kill)
 
 
+class CheckConfig(BaseModel):
+    """rpg: a d20 roll that decides a scenario action (instead of its chance)."""
+
+    attribute: str = "dexterity"
+    skill: str = ""
+    dc: int = Field(12, ge=1, le=30)  # difficulty, unless it is opposed:
+    against: str = ""  # the target's attribute rolled against (e.g. constitution)
+    against_skill: str = ""
+
+    @model_validator(mode="after")
+    def _known(self) -> "CheckConfig":
+        from simcore.engine.rpg import ATTRIBUTES, SKILLS
+
+        for a in (self.attribute, self.against):
+            if a and a not in ATTRIBUTES:
+                raise ValueError(f"unknown attribute '{a}' in check")
+        for s in (self.skill, self.against_skill):
+            if s and s not in SKILLS:
+                raise ValueError(f"unknown skill '{s}' in check")
+        return self
+
+
 class ActionConfig(BaseModel):
     """A scenario-specific action (bite, shoot, barricade, heal…) the engine resolves."""
 
@@ -135,6 +187,7 @@ class ActionConfig(BaseModel):
     who: Requirement = Field(default_factory=Requirement)
     target_requires: Requirement = Field(default_factory=Requirement)
     chance: float = Field(1.0, ge=0.0, le=1.0)  # probability of success
+    check: CheckConfig | None = None  # rpg: a roll decides instead of the chance
     cost: dict[str, float] = Field(default_factory=dict)  # items spent (even on failure)
     on_target: Outcome = Field(default_factory=Outcome)
     on_self: Outcome = Field(default_factory=Outcome)
@@ -426,6 +479,8 @@ class SimulationConfig(BaseModel):
     language: str = "en"
     # Daily plans: every plan_every ticks each LLM agent writes a short plan (extra LLM calls).
     planning: bool = False
+    # Role-playing rules: attributes, skills, d20 checks, experience and levels.
+    rpg: bool = False
     # The narrator writes a short chapter every chapter_every ticks (one LLM call each).
     story: bool = False
     chapter_every: int = Field(24, ge=1)

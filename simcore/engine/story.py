@@ -69,6 +69,13 @@ def score_event(e: SimEvent) -> tuple[float, str, list[str], str] | None:
         return 0.5, f"{d['agent']} found {d['target']}", [d["agent"], d["target"]], place
     if t == EventType.PLACE_CHANGE and d.get("cause"):
         return 0.5, _txt(d["cause"]), [], _txt(d.get("location"))
+    if t == EventType.LEVEL_UP:
+        return 0.6, f"{d['agent']} reached level {d['level']}", [d["agent"]], place
+    if t == EventType.DICE_ROLL and (d.get("critical") or d.get("fumble")):
+        what = f"{d.get('check') or d.get('attribute')}" + (f" on {d['target']}" if d.get("target") else "")
+        if d.get("critical"):
+            return 0.5, f"{d['agent']} rolled a critical ({what})", [d["agent"], _txt(d.get("target"))], place
+        return 0.4, f"{d['agent']} fumbled ({what})", [d["agent"], _txt(d.get("target"))], place
     if t == EventType.SPEECH_IGNORED:
         return 0.3, f"{e.source} ignored {d.get('agent')}", [e.source, _txt(d.get("agent"))], place
     if t == EventType.AGENT_ACTION and d.get("action_type") == "custom" and d.get("name"):

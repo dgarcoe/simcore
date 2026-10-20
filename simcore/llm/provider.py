@@ -601,6 +601,7 @@ class LLMProvider:
             goal=str(field("goal")).strip(),
             options=[str(o) for o in field("options", [])] if isinstance(field("options", []), list) else [],
             emotion=str(field("emotion")).strip(),
+            intent=str(field("intent")).strip().lower(),
             plan_step_done=field("plan_step_done", False) in (True, "true", "yes", 1),
         )
 

@@ -17,6 +17,7 @@ from simcore.engine.awareness import AwarenessMixin
 from simcore.engine.conditions import ConditionsMixin
 from simcore.engine.conversations import ConversationsMixin
 from simcore.engine.minds import MindsMixin
+from simcore.engine.rpg import RpgMixin
 from simcore.engine.search import SearchMixin
 from simcore.engine.society import SocietyMixin
 from simcore.engine.story import StoryMixin
@@ -74,7 +75,7 @@ SOCIETY_ACTIONS = {
 
 
 class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin,
-                       SearchMixin, StoryMixin, SocietyMixin):
+                       SearchMixin, StoryMixin, SocietyMixin, RpgMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -94,6 +95,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_search()
         self._init_story()
         self._init_society()
+        self._init_rpg()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -211,6 +213,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         for name in self.config.needs:
             agent.state.needs[name] = max(0.0, min(1.0, float(agent_cfg.needs.get(name, 0.0))))
         self._init_mind(agent, agent_cfg, self.clock.current_tick)
+        self._init_sheet(agent, agent_cfg)
         self.agents[agent.id] = agent
         self.environment.place_agent(agent.id, start_loc)
         return agent
@@ -311,6 +314,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._see_around(tick)
         await self._searches_tick(tick)
         await self._society_tick(tick)
+        await self._rpg_tick(tick)
         decisions = await asyncio.gather(*[
             self._agent_turn(agent, tick) for agent in agent_list
         ])
@@ -421,6 +425,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             action = self._check_speech(agent, action)
             if action.type != ActionType.WAIT:
                 self._record_speech(agent, action, tick)
+                await self._speech_roll(agent, action, self._addressees(agent, action), tick)
                 self._search_answered(agent, list(action.parameters.get("targets") or []))
 
         agent.apply_action(action, tick)
@@ -533,6 +538,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                       self._awareness_prompt(agent, tick, speech=not mute),
                       "" if forgets else self._search_prompt(agent, tick),
                       "" if mute else self._society_prompt(agent, tick),
+                      "" if found else self._rpg_prompt(agent),
                       "" if mute else self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
@@ -981,6 +987,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
     def _agent_state(self, agent: Agent) -> dict:
         data = agent.to_dict()
         data.update(self._society_state(agent))
+        data.update(self._rpg_state(agent))
         search = self._search_state(agent)
         if search:
             data["search"] = search

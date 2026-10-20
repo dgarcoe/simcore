@@ -101,10 +101,12 @@ class MindsMixin:
             source=agent.name,
         ))
 
-    def _advance_plan(self, agent: Agent, action: Action) -> None:
+    def _advance_plan(self, agent: Agent, action: Action) -> bool:
         st = agent.state
         if action.plan_step_done and st.plan and st.plan_step < len(st.plan):
             st.plan_step += 1
+            return True
+        return False
 
     def _wake(self, agent: Agent) -> None:
         """Something important happened: replan on the next turn."""
@@ -137,13 +139,18 @@ class MindsMixin:
         ))
 
     async def _share(self, speaker: Agent, listener: Agent, text: str, tick: int) -> None:
+        if self._caught(speaker.name, listener.name, tick):
+            listener.observe(f'{speaker.name} tried to make me believe "{text}", but I don\'t buy it.', tick,
+                             importance=0.7)
+            return
         own = next((b for b in speaker.state.beliefs if _same_belief(b["text"], text)), None)
         truth = own.get("truth") if own else None  # made up on the spot: unknown (maybe a lie)
         secret = bool(own and own.get("secret"))
         await self._learn(listener, text, speaker.name, truth, tick, secret=secret)
 
     async def _after_action_minds(self, agent: Agent, action: Action, tick: int) -> None:
-        self._advance_plan(agent, action)
+        if self._advance_plan(agent, action):
+            await self._gain_xp(agent, 5, tick)
         if action.share and action.type in (ActionType.SPEAK, ActionType.INTERACT, ActionType.WHISPER, ActionType.TRADE,
                                             ActionType.GIVE):
             for other in self._addressees(agent, action):
