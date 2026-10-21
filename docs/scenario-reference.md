@@ -218,7 +218,7 @@ States an agent can be in. The key is the condition's name.
 | `per_tick` | `{health, energy, mood}` | `{}` | Every tick |
 | `duration` | int ≥ 1 | none | Ticks until it ends (or turns into `becomes`) |
 | `becomes` | condition | `""` | What it turns into after `duration` (infected → zombie) |
-| `contagion` | `{chance, via}` | none | `via: interaction` spreads when people interact; `via: place` spreads every tick to everyone in the same place. `chance` is 0..1 (0.2 by default) |
+| `contagion` | `{chance, via}` | none | `via: interaction` spreads when people deal with each other (talking included); `via: contact` only on physical dealings (bites, heals, fights); `via: place` spreads every tick to everyone in the same place. `chance` is 0..1 (0.2 by default) |
 | `controller` | `llm` \| `rules` | `llm` | `rules`: driven by rules, no LLM calls (hordes, animals) |
 | `rules` | Rules | | Used with `controller: rules` |
 | `mind` | Mind | none | Used with the LLM controller: the agent becomes someone else |
@@ -400,6 +400,9 @@ story (bite, repair the radio, barricade the door, brew an antidote).
   uses an item on, attacks, heals or does a scenario action on someone, the condition can pass in
   **both** directions with `chance`. A carrier that cannot speak still infects whoever acts on it, and
   whoever it acts on (bites, attacks).
+- **Contagion `via: contact`:** like `interaction`, but talking and whispering never spread it: only
+  physical dealings (attacks, heals, giving, using an item on someone, trades, `interact` and scenario
+  actions such as a bite). Use it for blood and bites; keep `interaction` for things in the air.
 - **Contagion `via: place`:** every tick, every carrier rolls `chance` for every other person in the
   same place. Several carriers stack.
 - **Immunity:** nobody catches a condition they have, or one that leads to a condition they already

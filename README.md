@@ -234,7 +234,7 @@ New events: `item_transfer` (`kind`: give, take, drop, use, trade, produce, effe
 **Conditions** are states an agent can be in. Each one can have:
 - a description the agent reads, and an appearance others notice;
 - effects every tick, and a duration after which it ends or `becomes` another condition;
-- contagion, through interactions or by sharing a place.
+- contagion: through any interaction (talking included), only by physical contact (`via: contact`: bites, heals, fights) or by sharing a place.
 
 A condition with `controller: rules` takes the agent away from the LLM: it acts on targets
 present, seeks the place where most targets are, or roams. This suits zombies, animals or
@@ -252,7 +252,7 @@ resolves each one:
 ```yaml
 conditions:
   infected: {description: "fever and a bite", appearance: "looks feverish", per_tick: {health: -0.03},
-             duration: 5, becomes: zombie, contagion: {chance: 0.15, via: interaction}}
+             duration: 5, becomes: zombie, contagion: {chance: 0.15, via: contact}}
   zombie:   {appearance: "a walking corpse", controller: rules, rules: {action: bite, seek: true}}
 actions:
   bite:  {who: {conditions: [zombie]}, target_requires: {not_conditions: [zombie]}, chance: 0.6,

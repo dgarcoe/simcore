@@ -179,11 +179,14 @@ class ConditionsMixin:
             other.observe(f"{agent.name} has turned into {new}!", tick, importance=0.95)
         await self._condition_event(agent, old, "transformed", tick, into=new)
 
-    async def _spread_by_interaction(self, a: Agent, b: Agent, tick: int) -> None:
+    async def _spread_by_interaction(self, a: Agent, b: Agent, tick: int,
+                                     talk: bool = False) -> None:
+        """`interaction` spreads on any dealing (talk included); `contact` only on physical ones."""
+        ways = ("interaction",) if talk else ("interaction", "contact")
         for x, y in ((a, b), (b, a)):
             for name in list(x.state.conditions):
                 cond = self._condition(name)
-                if (cond and cond.contagion and cond.contagion.via == "interaction"
+                if (cond and cond.contagion and cond.contagion.via in ways
                         and not self._immune(y, name) and self._rng.random() < cond.contagion.chance):
                     await self.add_condition(y, name, tick, f"caught from {x.name}")
 

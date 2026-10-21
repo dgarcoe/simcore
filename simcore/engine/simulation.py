@@ -447,7 +447,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 ActionType.TRADE, ActionType.ACCEPT, ActionType.USE, ActionType.CUSTOM,
                 ActionType.ATTACK, ActionType.HEAL):
             for other in self._addressees(agent, action):
-                await self._spread_by_interaction(agent, other, tick)
+                await self._spread_by_interaction(
+                    agent, other, tick, talk=action.type in (ActionType.SPEAK, ActionType.WHISPER))
 
         # Emit event
         event_type = {

@@ -131,6 +131,20 @@ def test_contagion_by_interaction():
     assert "infected" in e.agents["bob"].state.conditions
 
 
+def test_contagion_by_contact_skips_talk():
+    contact = json.loads(json.dumps(ZOMBIES["conditions"]))
+    contact["infected"]["contagion"]["via"] = "contact"
+    e = make_engine(conditions=contact)
+    asyncio.run(e.add_condition(e.agents["ana"], "infected", 1))
+    e.environment.move_agent("bob", "Church", "Plaza")
+    e.agents["bob"].location = "Plaza"
+    act(e, "bob", type=ActionType.SPEAK, target="Ana", content="Are you ok?")
+    act(e, "bob", type=ActionType.WHISPER, target="Ana", content="Let me see")
+    assert "infected" not in e.agents["bob"].state.conditions
+    act(e, "bob", type=ActionType.INTERACT, target="Ana", content="checks her wound")
+    assert "infected" in e.agents["bob"].state.conditions
+
+
 def test_contagion_by_place():
     e = make_engine(conditions={**ZOMBIES["conditions"],
                                 "flu": {"contagion": {"chance": 1.0, "via": "place"}}})
