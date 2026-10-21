@@ -122,7 +122,11 @@ Agents use the [Big Five (OCEAN)](https://en.wikipedia.org/wiki/Big_Five_persona
 
 ## Configuration
 
-Scenarios are defined in YAML:
+Scenarios are defined in YAML. **[docs/scenario-reference.md](docs/scenario-reference.md) is the
+complete reference**: every key with its type, default and range, the effects language, what the
+engine already does on its own, common mistakes and a full example. It is written so you can hand
+it to an LLM with an idea and get back a scenario that loads at the first try (a test keeps it in
+sync with the schema). A minimal one:
 
 ```yaml
 simulation:
@@ -546,10 +550,20 @@ When running with `--dashboard`, SimCore exposes a REST + WebSocket API:
 GET  /api/state                  — Full simulation state
 GET  /api/agents                 — All agents
 GET  /api/events?last_n=100      — Event log
-POST /api/inject                 — Inject event {"description": "...", "location": "..."}
+GET  /api/agents/{id}             — One agent
+GET  /api/environment            — Places and world variables
+GET  /api/clock                  — Current tick and time
+POST /api/inject                 — Inject event {"description": "...", "location": "...", "effects": {...}}
+GET  /api/story                  — Chapters and key moments so far
 POST /api/postmortem/narrative   — Generate LLM narrative from run data
 POST /api/language               — Switch simulation language at runtime
 POST /api/control/pause|resume|stop
+GET  /api/scenarios              — Built-in and saved scenarios
+POST /api/scenarios              — Save a new scenario (the YAML as JSON)
+GET  /api/scenarios/{id}         — One scenario
+PUT  /api/scenarios/{id}         — Update it (built-ins are edited in place: an override is kept)
+DELETE /api/scenarios/{id}       — Delete a saved one, or restore a built-in to its original
+POST /api/scenarios/{id}/run     — Launch it {"demo": true, "speed": 2.0}
 WS   /ws                         — Real-time event stream
 ```
 
