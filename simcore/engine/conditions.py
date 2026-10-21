@@ -180,9 +180,9 @@ class ConditionsMixin:
         await self._condition_event(agent, old, "transformed", tick, into=new)
 
     async def _spread_by_interaction(self, a: Agent, b: Agent, tick: int,
-                                     talk: bool = False) -> None:
-        """`interaction` spreads on any dealing (talk included); `contact` only on physical ones."""
-        ways = ("interaction",) if talk else ("interaction", "contact")
+                                     contact: bool = True) -> None:
+        """`interaction` spreads on any dealing; `contact` only on blood-and-wounds ones."""
+        ways = ("interaction", "contact") if contact else ("interaction",)
         for x, y in ((a, b), (b, a)):
             for name in list(x.state.conditions):
                 cond = self._condition(name)

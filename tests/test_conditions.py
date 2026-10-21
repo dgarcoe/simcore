@@ -140,8 +140,9 @@ def test_contagion_by_contact_skips_talk():
     e.agents["bob"].location = "Plaza"
     act(e, "bob", type=ActionType.SPEAK, target="Ana", content="Are you ok?")
     act(e, "bob", type=ActionType.WHISPER, target="Ana", content="Let me see")
+    act(e, "bob", type=ActionType.INTERACT, target="Ana", content="shakes her hand")
     assert "infected" not in e.agents["bob"].state.conditions
-    act(e, "bob", type=ActionType.INTERACT, target="Ana", content="checks her wound")
+    act(e, "bob", type=ActionType.ATTACK, target="Ana")  # blood
     assert "infected" in e.agents["bob"].state.conditions
 
 

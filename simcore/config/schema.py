@@ -204,7 +204,8 @@ class ActionConfig(BaseModel):
 class ContagionConfig(BaseModel):
     chance: float = Field(0.2, ge=0.0, le=1.0)
     # interaction: when someone talks to / acts on a carrier (or the carrier on them);
-    # contact: like interaction but only physical dealings (not talking or whispering);
+    # contact: only through blood and wounds: attacks, heals, items used on someone and scenario
+    # actions (a bite), never talking, whispering, trading or handing things over;
     # place: every tick, to everyone at the same location as a carrier.
     via: Literal["interaction", "contact", "place"] = "interaction"
 
