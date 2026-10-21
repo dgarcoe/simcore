@@ -111,6 +111,12 @@ def create_app(engine: SimulationEngine | None = None,
             return {"error": "No simulation loaded"}
         return server_state["engine"].environment.to_dict()
 
+    @app.get("/api/version")
+    async def get_version():
+        from simcore.features import version
+
+        return version()
+
     @app.get("/api/clock")
     async def get_clock():
         if not server_state["engine"]:

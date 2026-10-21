@@ -151,3 +151,14 @@ def test_everyone_learns_where_a_dropped_item_lies():
     assert "nobody carries it now, it lies in Salón." in e._build_observation(
         ag(e, "Tobías"), 3, "en"
     )
+
+
+def test_unknown_rule_tests_are_rejected_instead_of_firing_at_once():
+    with pytest.raises(ValueError, match="holdz"):
+        make_engine(rules=[{"when": {"holdz": {"item": "sello"}}, "then": {"end": "x"}}])
+
+
+def test_version_lists_the_features():
+    from simcore.features import version
+
+    assert {"artifacts", "contact_contagion", "rpg"} <= set(version()["features"])

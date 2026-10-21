@@ -568,6 +568,7 @@ GET  /api/events?last_n=100      — Event log
 GET  /api/agents/{id}             — One agent
 GET  /api/environment            — Places and world variables
 GET  /api/clock                  — Current tick and time
+GET  /api/version                — Pinned commit (SIMCORE_REF) and the features this Simcore supports
 POST /api/inject                 — Inject event {"description": "...", "location": "...", "effects": {...}}
 GET  /api/story                  — Chapters and key moments so far
 POST /api/postmortem/narrative   — Generate LLM narrative from run data

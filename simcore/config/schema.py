@@ -361,6 +361,8 @@ def _same(a: object, b: object) -> bool:
 class CountSpec(Compare):
     """How many living agents (optionally with / without a condition, in a place or a group)."""
 
+    model_config = {"extra": "forbid"}
+
     condition: str = ""
     not_condition: str = ""
     location: str = ""
@@ -370,6 +372,8 @@ class CountSpec(Compare):
 
 class HoldSpec(BaseModel):
     """The same living agent has carried the item for `ticks` ticks in a row (at `location`)."""
+
+    model_config = {"extra": "forbid"}
 
     item: str
     ticks: int = Field(1, ge=1)
@@ -383,7 +387,8 @@ class PlaceSpec(BaseModel):
 
 
 class RuleWhen(BaseModel):
-    model_config = {"populate_by_name": True}
+    # An unknown test must fail loudly: ignoring it would leave the rule firing every tick.
+    model_config = {"populate_by_name": True, "extra": "forbid"}
 
     at: int | None = Field(None, ge=0)
     every: int | None = Field(None, ge=1)
