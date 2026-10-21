@@ -198,6 +198,8 @@ The catalog is optional: unlisted items still work, just without a description o
 | `cures` | list of conditions | `[]` | Removed when used (an antidote) |
 | `weapon` | Weapon | none | Makes the built-in `attack` stronger |
 | `armor` | int 0..10 | 0 | rpg: added to the defense of whoever carries it |
+| `visible` | bool | false | Everyone sees who carries it (a crown, a seal, the only key) |
+| `drops` | bool | false | Falls to the ground (the place's stock) when its carrier dies or leaves, so it can be taken |
 
 **Weapon:** `{damage, chance, ammo, ranged}`.
 - `damage` is the health taken on a hit (0.4 by default).
@@ -309,7 +311,12 @@ World rules are checked every tick, in order. All the `when` tests that are set 
   - `from` / `until`: a tick window.
 - **World variables:** `global: {variable: Compare}`.
 - **Living agents:** `alive: Compare` tests how many agents are alive.
-- **Counted agents:** `count: Compare` counts living agents. Narrow the count with any of `condition`, `not_condition`, `location` and `faction`.
+- **Counted agents:** `count: Compare` counts living agents. Narrow the count with any of `condition`, `not_condition`, `location`, `faction` and `item` (carrying at least one).
+- **Who keeps an item:** `holds: {item, ticks, location}` is true while the same living agent has
+  carried `item` for at least `ticks` ticks in a row (1 by default), optionally only while at
+  `location`. The count restarts whenever it changes hands. The rule's `description` and every text
+  in `then` may say `{holder}`, which is replaced by that agent's name; it also works as an effect
+  target (`kill: "{holder}"`). The item must be in `items`.
 - **Places:** `place: {name: {closed, hazard, occupants: Compare}}`.
 
 **Compare:** any of `lt`, `lte`, `gt`, `gte`, `eq`, `ne`, e.g. `{lte: 0}`.
@@ -418,6 +425,10 @@ story (bite, repair the radio, barricade the door, brew an antidote).
   - `when.place` tests take booleans: `closed: true`, `hazard: false`.
 - **`count` in `when`:** filters and comparison sit in one flat map:
   `count: {condition: zombie, location: Plaza, gte: 3}`.
+- **Coveted items:** agents see who carries a `visible` item ("carries the seal") and are told
+  every `holds` rule and how long the current holder has kept it, so they compete for it with the
+  built-in `attack`, `take`, `find` and whatever scenario actions you add (steal, poison). Make the
+  item `drops: true` so that killing its carrier puts it on the floor.
 - **Effect targets:** they are agents, `location:<place>` or `all`, never a group. To act on a group,
   test it with `count: {faction: X, …}` and use world variables.
 - **Votes:** they only open when an agent uses `call_vote` (after `from`). To force a decision at a
@@ -467,6 +478,24 @@ rules:
     when: {global: {combustible: {lte: 0}}}
     once: true
     then: {locations: {Comedor: {hazard: {label: helado, per_tick: {health: -0.03}}}}}
+```
+
+**King of the hill** (only one can win: whoever keeps the seal 12 hours in a row):
+
+```yaml
+items:
+  sello: {description: el sello del conde, consumable: false, visible: true, drops: true}
+actions:
+  robar:
+    description: quitarle el sello a alguien sin que se dé cuenta
+    target_requires: {items: {sello: 1}}
+    check: {attribute: dexterity, skill: sleight_of_hand, dc: 10, against: wisdom, against_skill: perception}
+    on_target: {items: {sello: -1}}
+    on_self: {items: {sello: 1}}
+rules:
+  - description: "{holder} conserva el sello doce horas y es proclamado señor."
+    when: {holds: {item: sello, ticks: 12}}
+    then: {end: "{holder} es el nuevo señor de Valdemora."}
 ```
 
 ## Common mistakes

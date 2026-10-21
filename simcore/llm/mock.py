@@ -146,6 +146,11 @@ class MockLLMProvider:
         if "You cannot speak or communicate" in user_prompt:
             return self._mute_decision(user_prompt, nearby, location)
 
+        # A coveted item whoever keeps wins: grab it, take it from its carrier, or run with it.
+        prize = self._prize_decision(user_prompt, nearby, available_locations, location)
+        if prize:
+            return prize
+
         # Pressing needs first (hunger, sleep…).
         urgent = self._need_decision(user_prompt, location)
         if urgent:
@@ -323,6 +328,43 @@ class MockLLMProvider:
                     return Action(type=ActionType.MOVE, target=self._rng.choice(places), reasoning="I need to sort myself out")
                 if way == "rest":
                     return Action(type=ActionType.REST, reasoning="I'm exhausted")
+        return None
+
+    def _prize_decision(self, prompt: str, nearby: list[str], places: list[str], location: str) -> Action | None:
+        prizes = re.findall(r"^Whoever keeps the (.+?)(?: in .+?)? for \d+ (?:hours|turns) in a row wins", prompt,
+                            re.MULTILINE)
+        if not prizes:
+            return None
+        roll = self._rng.random()
+        for prize in prizes:
+            if prize in _items_after(prompt, "Items you can take here: ") and roll < 0.85:
+                return Action(type=ActionType.TAKE, item=prize, amount=1,
+                              reasoning=f"The {prize} is lying right there")
+            if f"You carry the {prize}" in prompt or re.search(r"; you have kept it for \d+", prompt):
+                others = [p for p in places if p != location]
+                if nearby and others and roll < 0.35:
+                    return Action(type=ActionType.MOVE, target=self._rng.choice(others),
+                                  reasoning=f"Too many eyes on the {prize}")
+                return None
+            carriers = re.findall(rf"^- (.+?): .*carries the {re.escape(prize)}", prompt, re.MULTILINE)
+            carriers = [c for c in carriers if c in nearby]
+            if carriers and roll < 0.5:
+                target = carriers[0]
+                block = prompt.split("Special actions you can do now", 1)[1] if "Special actions you can do now" in prompt else ""
+                moves = re.findall(r"^- ([\w-]+) \(target: a person here", block, re.MULTILINE)
+                if moves and roll < 0.3:
+                    return Action(type=ActionType.CUSTOM, target=target, parameters={"name": self._rng.choice(moves)},
+                                  reasoning=f"{target} has the {prize}")
+                return Action(type=ActionType.ATTACK, target=target, reasoning=f"The {prize} will be mine")
+            lying = re.search(r"nobody carries it now, it lies in (.+?)\.$", prompt, re.MULTILINE)
+            if lying and lying.group(1) != location and roll < 0.7:
+                return Action(type=ActionType.MOVE, target=lying.group(1), reasoning=f"The {prize} is lying there")
+            holder = re.search(r"; (.+?)(?: \(at (.+?)\))? has kept it for \d+", prompt)
+            if holder and not carriers and roll < 0.6:
+                if holder.group(2) and holder.group(2) != location:
+                    return Action(type=ActionType.MOVE, target=holder.group(2),
+                                  reasoning=f"{holder.group(1)} has the {prize} there")
+                return Action(type=ActionType.FIND, target=holder.group(1), reasoning=f"Whoever has the {prize}…")
         return None
 
     def _special_decision(self, prompt: str, nearby: list[str], chance: float = 0.3) -> Action | None:

@@ -493,6 +493,21 @@ conditions:
 - **`mind` vs `controller: rules`:** `rules` still exists as the cheap option, with no LLM calls (good for big hordes). A `mind` costs one LLM call per agent per tick, like anyone else.
 - **Requirements:** `Requirement` also accepts `any_conditions` ("at least one of"), e.g. an action that works on a zombie *or* a horde walker.
 
+### Coveted items: only one can win
+
+Mark an item `visible` (everyone sees who carries it) and `drops` (it falls where its carrier dies or
+leaves), and end the run with a `holds` rule: whoever keeps it N ticks in a row wins, and `{holder}`
+names them in the rule's texts. Agents are told the race and who is ahead, and fight for it with
+`attack`, `take`, `find` and scenario actions such as steal or poison.
+
+```yaml
+items:
+  sello: {consumable: false, visible: true, drops: true}
+rules:
+  - when: {holds: {item: sello, ticks: 12}}
+    then: {end: "{holder} keeps the seal for twelve hours and becomes lord."}
+```
+
 ### Situational awareness and private talk
 
 - **What each agent's prompt shows:**

@@ -92,6 +92,7 @@ class AwarenessMixin:
                 looks = self._looks(o, tick)
                 if looks:
                     bits.append(looks)
+                bits.extend(f"carries the {item}" for item in self._carries_visible(o))
                 if o.state.health < 0.3:
                     bits.append("badly hurt")
                 elif o.state.health < 0.6:

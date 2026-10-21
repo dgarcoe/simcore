@@ -13,6 +13,7 @@ from simcore.agents.agent import Agent, AgentState
 from simcore.agents.persona import Persona, PersonalityTraits
 from simcore.config.schema import AgentConfig, SimulationConfig
 from simcore.engine.clock import SimClock
+from simcore.engine.artifacts import ArtifactsMixin
 from simcore.engine.awareness import AwarenessMixin
 from simcore.engine.conditions import ConditionsMixin
 from simcore.engine.conversations import ConversationsMixin
@@ -75,7 +76,7 @@ SOCIETY_ACTIONS = {
 
 
 class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin,
-                       SearchMixin, StoryMixin, SocietyMixin, RpgMixin):
+                       SearchMixin, StoryMixin, SocietyMixin, RpgMixin, ArtifactsMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -96,6 +97,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_story()
         self._init_society()
         self._init_rpg()
+        self._init_artifacts()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -336,6 +338,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                             source=agent.name,
                         ))
 
+        await self._refresh_holders(tick)  # who carries the coveted items after everyone acted
+
         # Per-tick passive decay for living agents
         for agent in self.living_agents:
             agent.apply_tick_decay()
@@ -539,6 +543,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                       "" if forgets else self._search_prompt(agent, tick),
                       "" if mute else self._society_prompt(agent, tick),
                       "" if found else self._rpg_prompt(agent),
+                      self._artifacts_prompt(agent, tick),
                       "" if mute else self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
@@ -701,6 +706,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         agent.state.status = "dead"
         agent.state.health = 0.0
         self._drop_offers(agent)
+        await self._drop_artifacts(agent, tick)
         place = self.environment.get_location(agent.location)
         if place:
             place.remove_occupant(agent.id)
@@ -724,6 +730,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             return
         agent.state.status = "departed"
         self._drop_offers(agent)
+        await self._drop_artifacts(agent, tick)
         place = self.environment.get_location(agent.location)
         if place:
             place.remove_occupant(agent.id)
@@ -1027,5 +1034,6 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             ),
             "environment": self.environment.to_dict(),
             "society": self.society_state(),
+            "holders": self.holders_state(self.clock.current_tick),
             "llm_stats": self.llm.stats,
         }

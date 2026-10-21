@@ -120,6 +120,10 @@ class ItemConfig(BaseModel):
     weapon: WeaponConfig | None = None
     # rpg: added to the defense of whoever carries it (a vest, a shield).
     armor: int = Field(0, ge=0, le=10)
+    # Everyone sees who carries it (a crown, a seal, the only key).
+    visible: bool = False
+    # Falls to the ground (the place's stock) when its carrier dies or leaves.
+    drops: bool = False
 
     @field_validator("on_use")
     @classmethod
@@ -359,6 +363,15 @@ class CountSpec(Compare):
     not_condition: str = ""
     location: str = ""
     faction: str = ""
+    item: str = ""  # only agents carrying at least one
+
+
+class HoldSpec(BaseModel):
+    """The same living agent has carried the item for `ticks` ticks in a row (at `location`)."""
+
+    item: str
+    ticks: int = Field(1, ge=1)
+    location: str = ""
 
 
 class PlaceSpec(BaseModel):
@@ -378,6 +391,7 @@ class RuleWhen(BaseModel):
     alive: Compare | None = None
     count: CountSpec | None = None
     place: dict[str, PlaceSpec] = Field(default_factory=dict)
+    holds: HoldSpec | None = None
 
 
 class RuleConfig(BaseModel):
@@ -566,6 +580,13 @@ class SimulationConfig(BaseModel):
                 if rule.when.count.location and rule.when.count.location not in places:
                     problems.append(f"{where} counts in unknown place '{rule.when.count.location}'")
             problems.extend(f"{where} checks unknown place '{p}'" for p in rule.when.place if p not in places)
+            held = rule.when.holds
+            if held and held.item not in self.items:
+                problems.append(f"{where} holds unknown item '{held.item}' (add it to items)")
+            if held and held.location and held.location not in places:
+                problems.append(f"{where} holds the item in unknown place '{held.location}'")
+            if rule.when.count and rule.when.count.item and rule.when.count.item not in self.items:
+                problems.append(f"{where} counts unknown item '{rule.when.count.item}' (add it to items)")
         names = {a.name for a in self.agents}
         for fname, f in self.factions.items():
             problems.extend(f"faction {fname} has unknown member '{m}'" for m in f.members if m not in names)

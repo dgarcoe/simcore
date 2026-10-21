@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from simcore.agents.actions import Action, ActionType
 from simcore.config.schema import HazardConfig, NeedConfig, Requirement, RuleConfig
+from simcore.engine.artifacts import fill_holder
 from simcore.engine.effects import parse_effects
 from simcore.engine.events import EventType, SimEvent
 
@@ -192,7 +193,8 @@ class WorldMixin:
                     if (not c.condition or c.condition in a.state.conditions)
                     and (not c.not_condition or c.not_condition not in a.state.conditions)
                     and (not c.location or a.location == c.location)
-                    and (not c.faction or self._faction_of(a.name) == c.faction))
+                    and (not c.faction or self._faction_of(a.name) == c.faction)
+                    and (not c.item or a.state.resources.get(c.item, 0) >= 1))
             if not c.test(n):
                 return False
         for name, spec in w.place.items():
@@ -206,23 +208,31 @@ class WorldMixin:
             if spec.occupants is not None and not spec.occupants.test(
                     sum(1 for a in self.living_agents if a.location == name)):
                 return False
+        if w.holds is not None and self._hold_match(rule, tick) is None:
+            return False
         return True
 
     async def _rules_tick(self, tick: int) -> None:
+        await self._refresh_holders(tick)
         for i, rule in enumerate(self.config.rules):
             if i in self._fired_rules or not self._rule_holds(rule, tick):
                 continue
             if rule.once:
                 self._fired_rules.add(i)
-            if rule.description:
-                self.environment.log_event(tick, "rule", rule.description)
+            holder = self._hold_match(rule, tick) if rule.when.holds else None
+            description, then = rule.description, rule.then
+            if holder:
+                description, then = fill_holder(description, holder), fill_holder(then, holder)
+            if description:
+                self.environment.log_event(tick, "rule", description)
                 for agent in self.living_agents:
-                    agent.observe(f"World event: {rule.description}", tick, importance=0.8)
+                    agent.observe(f"World event: {description}", tick, importance=0.8)
             await self.event_bus.emit(SimEvent(
                 type=EventType.RULE_FIRED, tick=tick,
-                data={"rule": i, "description": rule.description, "effects": rule.then},
+                data={"rule": i, "description": description, "effects": then,
+                      **({"holder": holder} if holder else {})},
             ))
-            await self.apply_effects(parse_effects(rule.then), tick, cause=rule.description)
+            await self.apply_effects(parse_effects(then), tick, cause=description)
             if not self._running:
                 return
 
