@@ -24,6 +24,11 @@ ACTION_ALIASES = {
     "buscar": "find", "search": "find", "look_for": "find", "find_person": "find", "procurar": "find",
     "atacar": "attack", "matar": "attack", "golpear": "attack", "disparar": "attack", "kill": "attack",
     "shoot": "attack", "hit": "attack", "fight": "attack", "pelear": "attack",
+    "stab": "attack", "punch": "attack", "strike": "attack", "slash": "attack",
+    "murder": "attack", "assassinate": "attack", "slay": "attack", "duel": "attack",
+    "wound": "attack", "assault": "attack", "apuñalar": "attack", "acuchillar": "attack",
+    "pegar": "attack", "asesinar": "attack", "herir": "attack", "agredir": "attack",
+    "estrangular": "attack", "atacar_a": "attack", "luchar": "attack", "golpe": "attack",
     "curar": "heal", "sanar": "heal", "treat": "heal", "cure": "heal",
     "fundar_grupo": "found_group", "crear_grupo": "found_group", "create_group": "found_group",
     "form_group": "found_group", "unirse": "join", "join_group": "join", "salir": "leave",
@@ -568,6 +573,13 @@ class LLMProvider:
         data = _load_json_object(content)
         raw_action = str(data.get("action", "wait")).strip()
         params = dict(data["parameters"]) if isinstance(data.get("parameters"), dict) else {}
+        if " " in raw_action:  # "attack Ana", "atacar a Ana": the verb, and the rest as the target
+            head, _, rest = raw_action.partition(" ")
+            if head.lower() in ACTION_ALIASES or head.lower() in {t.value for t in ActionType}:
+                raw_action = head
+                rest = re.sub(r"^(?:a|al|to|the|with|con)\s+", "", rest.strip(), flags=re.I)
+                if rest and not data.get("target"):
+                    data["target"] = rest
         if raw_action.lower() in ACTION_ALIASES:
             # kept: a scenario may define an action with this very name (the engine checks)
             params["alias_of"] = raw_action.lower()

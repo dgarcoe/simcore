@@ -4,6 +4,8 @@ routines and visible emotions. Mixed into SimulationEngine."""
 
 from __future__ import annotations
 
+import re
+
 import unicodedata
 from typing import TYPE_CHECKING
 
@@ -21,6 +23,7 @@ DISTRUST = -0.3  # a member this unhappy with the leader thinks of leaving
 VOTE_TICKS = 2  # a vote stays open this long
 FAVOR_TICKS = 24  # an unpaid favor sours things after this long
 EMOTION_TICKS = 3  # a felt emotion lasts this long
+HOSTILE_KINDS = re.compile(r"rival|enem|foe|nemesis|némesis", re.IGNORECASE)
 THREAT_TICKS = 6  # someone who attacked recently is a fair target
 
 EMOTIONS = {
@@ -775,7 +778,63 @@ class SocietyMixin:
                 f'"heal" someone ({", ".join(healing) if healing else "with your skills"})'
             )
         lines.append("You can " + " or ".join(means) + ".")
+        hostile = self._hostile_prompt(agent, tick)
+        if hostile:
+            lines.append(hostile)
         return "\n".join(lines)
+
+    def _hostile_prompt(self, agent: Agent, tick: int) -> str:
+        """People here the agent has a reason to fight, with what it could do to them and its odds.
+
+        Small models never infer that "attack" applies to the enemy standing in front of them.
+        """
+        found = self._mind(agent)
+        allowed = set(found[1].actions) if found and found[1].actions else None
+        carried = set(self._carries_visible(agent)) if hasattr(self, "_carries_visible") else set()
+        mine = self._faction_of(agent.name)
+        rivals = self._factions.get(mine, {}).get("rivals", set()) if mine else set()
+        item, _, chance, _ = self._weapon(agent)
+        lines = []
+        for other in self._witnesses(agent):
+            why = []
+            visible = self._carries_visible(other) if hasattr(self, "_carries_visible") else []
+            why += [f"has the {p}" + (" (keeping it wins)" if self._prize_wins(p) else "")
+                    for p in visible if p not in carried]
+            if self._is_threat(other, tick):
+                why.append("dangerous")
+            rel = agent.memory.get_relationship(other.name)
+            if rel and HOSTILE_KINDS.search(rel.kind or ""):
+                why.append(f"your {rel.kind}")
+            elif rel and rel.sentiment <= -0.5:
+                why.append(f"you can't stand them{f' (your {rel.kind})' if rel.kind else ''}")
+            theirs = self._faction_of(other.name)
+            if theirs and theirs in rivals:
+                why.append(f"of {theirs}, your rivals")
+            if not why:
+                continue
+            options = []
+            if allowed is None or "attack" in allowed:
+                if self.rpg:
+                    spec = self.config.items.get(item) if item else None
+                    ranged = bool(spec and spec.weapon and spec.weapon.ranged)
+                    odds = self._chance(agent, "dexterity" if ranged else "strength",
+                                        "" if ranged else "athletics", self._defense(other))
+                else:
+                    odds = chance
+                options.append(f'"attack" ({f"your {item}" if item else "fists"}, ≈{odds:.0%})')
+            options += [f'"{name}"' for name, act in self._available_actions(agent)
+                        if act.target == "agent" and self._meets(other, act.target_requires)
+                        and (allowed is None or name in allowed)]
+            if options:
+                lines.append(f"- {other.name}: {'; '.join(why)}. You could {' or '.join(options)}.")
+        if not lines:
+            return ""
+        head = "People here you have reason to fight (only if it fits who you are):"
+        return "\n".join([head, *lines[:3]])
+
+    def _prize_wins(self, item: str) -> bool:
+        return any(r.when.holds and r.when.holds.item == item and "end" in r.then
+                   for r in self.config.rules)
 
     def _looks(self, other: Agent, tick: int) -> str:
         emotion, _ = self._emotion(other, tick)

@@ -493,6 +493,14 @@ conditions:
 - **`mind` vs `controller: rules`:** `rules` still exists as the cheap option, with no LLM calls (good for big hordes). A `mind` costs one LLM call per agent per tick, like anyone else.
 - **Requirements:** `Requirement` also accepts `any_conditions` ("at least one of"), e.g. an action that works on a zombie *or* a horde walker.
 
+### Conflict
+
+Agents are told the story is fiction (characters may lie, steal, fight or kill when it fits them)
+and, every turn, whom here they have reason to fight: enemies, rival groups, whoever is dangerous or
+carries a coveted item, with their odds and the scenario actions they could use. Violent verbs the
+model invents (stab, apuñalar, "attack Ana"…) are read as `attack`. Small models (3B) still fight
+far less than 7B+ ones.
+
 ### Coveted items: only one can win
 
 Mark an item `visible` (everyone sees who carries it) and `drops` (it falls where its carrier dies or

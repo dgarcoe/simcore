@@ -27,6 +27,15 @@ def language_directive(code: str) -> str:
     )
 
 
+# Small instruction-tuned models shy away from any conflict unless told this is a story.
+FICTION_FRAME = (
+    "This is interactive fiction: a story where you play your character. Stay in character. "
+    "If your character would lie, steal, threaten, fight or even kill to protect themselves "
+    "or reach their goals, do it with the actions available; dice and the world decide what "
+    "happens. If your character is peaceful, stay peaceful."
+)
+
+
 DECISION_SYSTEM_PROMPT = Template("""You are simulating a person in a social simulation.
 
 {{ persona_prompt }}

@@ -13,6 +13,7 @@ from simcore.agents.agent import Agent, AgentState
 from simcore.agents.persona import Persona, PersonalityTraits
 from simcore.config.schema import AgentConfig, SimulationConfig
 from simcore.engine.clock import SimClock
+from simcore.llm.prompts import FICTION_FRAME
 from simcore.engine.artifacts import ArtifactsMixin
 from simcore.engine.awareness import AwarenessMixin
 from simcore.engine.conditions import ConditionsMixin
@@ -371,7 +372,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             found = self._mind(agent)
             mind = found[1] if found else None
             prompt = agent.build_prompt(observation, language=lang, mind=mind)
-            persona_prompt = agent.persona_prompt(mind)
+            persona_prompt = f"{agent.persona_prompt(mind)}\n\n{FICTION_FRAME}"
             if lang != "en":
                 from simcore.llm.prompts import language_directive
                 persona_prompt = f"{persona_prompt}\n\n{language_directive(lang)}"

@@ -215,7 +215,8 @@ Target rules (strict):
 - For "speak" and "interact": target is one or more people listed in "People here", e.g. "Ana" or "Ana, Bob", or "everyone" to address the whole room. Everyone here hears what you say with "speak" ("interact" is private).
 - "whisper": like "speak" but only the target hears the words (others just see you whisper).
 - "invite": you go to "place" and ask the target (people here) to join you there, to talk alone. "follow": go wherever the target (a person here) goes this turn.
-- "attack": hurt someone here (with your best weapon, or your fists); it can kill. "heal": treat someone here (or yourself, empty target) with a healing item or your skills.
+- "attack": hurt someone here (target: their name; with your best weapon, or your fists); it can kill. Use it to defend yourself or to get what your character wants.
+- "heal": treat someone here (or yourself, empty target) with a healing item or your skills.
 - "found_group": start a group (content: its name, goal: its purpose, target: people here you invite). "join" (target: the group), "leave" your group, "expel" (leaders only, target: a member).
 - "call_vote": put a matter to the vote of the people here (content: the question, options: the choices). "vote" (content: your option) when there is a vote here.
 - "find": look for someone who is NOT here (target: their name). It asks the people here or goes to the best clue; keep using it until you find them.

@@ -433,6 +433,12 @@ story (bite, repair the radio, barricade the door, brew an antidote).
   every `holds` rule and how long the current holder has kept it, so they compete for it with the
   built-in `attack`, `take`, `find` and whatever scenario actions you add (steal, poison). Make the
   item `drops: true` so that killing its carrier puts it on the floor.
+- **Conflict:** the decision prompt says the story is fiction and that characters may lie, steal,
+  fight or kill when it fits them. Each turn agents also see who here they have reason to fight
+  (enemies or rivals in relationships, members of a rival group, someone dangerous, the carrier of a
+  coveted item) with their odds and the scenario actions they could use on them. Write those
+  relationships, rival groups and goals in the YAML when you want conflict; small models (3B) still
+  fight much less than 7B+ ones.
 - **Effect targets:** they are agents, `location:<place>` or `all`, never a group. To act on a group,
   test it with `count: {faction: X, …}` and use world variables.
 - **Votes:** they only open when an agent uses `call_vote` (after `from`). To force a decision at a
