@@ -34,6 +34,7 @@ ACTION_ALIASES = {
     "form_group": "found_group", "unirse": "join", "join_group": "join", "salir": "leave",
     "leave_group": "leave", "abandonar": "leave", "expulsar": "expel", "kick": "expel",
     "votar": "vote", "convocar_votacion": "call_vote", "votacion": "call_vote", "start_vote": "call_vote",
+    "robar": "steal"
 }
 
 
@@ -254,13 +255,10 @@ class LLMProvider:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=self.temperature,
-                    max_tokens=self.max_tokens,
-                    frequency_penalty=self.frequency_penalty,
-                    presence_penalty=self.presence_penalty,
+                    **self._generation_params(self.model),
                     **self._json_mode(),
                 )
-
+                
                 #logger.warning(
                 #    "Attempt %s/%s - FULL RESPONSE=%s",
                 #    attempt,
@@ -334,12 +332,38 @@ class LLMProvider:
             reasoning=f"LLM failed after {max_retries} attempts: {last_error}",
         )
 
-    def _json_mode(self) -> dict[str, Any]:
-        """Ollama can be told to answer with valid JSON only (its "format": "json")."""
-        if self.model.startswith(("ollama/", "ollama_chat/")):
-            return {"response_format": {"type": "json_object"}}
-        return {}
+    def _json_mode(self, model: str | None = None) -> dict[str, Any]:
+        active_model = model or self.model
 
+        if active_model.startswith(("ollama/", "ollama_chat/")):
+            return {
+                "format": "json",
+                "think": False,
+            }
+        
+        return {
+            "response_format": {
+                "type": "json_object",
+            }
+        }
+
+    def _generation_params(self, model: str) -> dict[str, Any]:
+
+        params = {
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+
+        if model.startswith(("ollama/", "ollama_chat/")):
+            return params
+
+        params.update({
+            "frequency_penalty": self.frequency_penalty,
+            "presence_penalty": self.presence_penalty,
+        })
+               
+        return params    
+    
     async def decide_old(self, system_prompt: str, user_prompt: str) -> Action:
         """Ask the LLM to decide an agent's next action."""
         cache_key = f"{system_prompt}|||{user_prompt}" if self.cache else None
@@ -395,18 +419,21 @@ class LLMProvider:
         lang_name = LANGUAGE_NAMES.get(language, language)
         self._call_count += 1
         try:
+
+            messages=[
+                {"role": "system", "content": (
+                    f"You are a translator. Translate the text to {lang_name}. "
+                    "Output ONLY the translated text — no quotes, no explanations, no extra content."
+                )},
+                {"role": "user", "content": text},
+            ]
+            
             response = await litellm.acompletion(
                 model=self.reflection_model,
-                messages=[
-                    {"role": "system", "content": (
-                        f"You are a translator. Translate the text to {lang_name}. "
-                        "Output ONLY the translated text — no quotes, no explanations, no extra content."
-                    )},
-                    {"role": "user", "content": text},
-                ],
-                temperature=0.2,
-                max_tokens=200,
+                messages=messages,
+                **self._generation_params(self.reflection_model),
             )
+            
             return response.choices[0].message.content.strip()
         except Exception as e:
             logger.warning(f"Translation failed: {e}")
