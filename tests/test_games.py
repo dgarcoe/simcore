@@ -215,6 +215,7 @@ def test_whispers_to_others_stay_secret_in_a_diary():
                 "reasoning": "plan",
             },
         },
+        {"type": "story_chapter", "tick": 2, "source": "", "data": {"text": "Bob conspira"}},
         {
             "type": "agent_speak",
             "tick": 2,
