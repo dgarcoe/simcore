@@ -466,6 +466,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 # Structured copy of the action (the text above stays for older clients).
                 "action_type": action.type.value,
                 "target": action.target,
+                "location": agent.location,
                 "content": action.content,
                 **({"targets": action.parameters["targets"]} if action.parameters.get("targets") else {}),
                 **({"place": action.place, "from": action.parameters.get("from", "")}

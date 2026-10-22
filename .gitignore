@@ -36,3 +36,4 @@ dashboard/dist/
 .coverage
 htmlcov/
 runs/
+games/

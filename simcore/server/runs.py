@@ -38,7 +38,7 @@ class RunRecorder:
         self.store = store
         self.id = run_id
         self.meta = {
-            **{k: header.get(k) for k in ("name", "description", "scenario_id", "model", "demo")},
+            **{k: header.get(k) for k in ("name", "description", "scenario_id", "model", "demo", "game_id")},
             "id": run_id,
             "started": _now(),
             "ended": None,
@@ -115,7 +115,8 @@ class RunStore:
         return self.root / f"{self._check(run_id)}.meta.json"
 
     def start(
-        self, engine, scenario: dict | None, scenario_id: str = "", demo: bool = False
+        self, engine, scenario: dict | None, scenario_id: str = "", demo: bool = False,
+        game_id: str = "",
     ) -> RunRecorder:
         """Record a run that is about to start (subscribes to its event bus)."""
         self.root.mkdir(parents=True, exist_ok=True)
@@ -132,6 +133,7 @@ class RunStore:
             "scenario_id": scenario_id,
             "model": "demo" if demo else cfg.llm.model,
             "demo": demo,
+            "game_id": game_id,
             "config": scenario,
         }
         recorder = RunRecorder(self, run_id, header)

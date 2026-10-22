@@ -493,6 +493,17 @@ conditions:
 - **`mind` vs `controller: rules`:** `rules` still exists as the cheap option, with no LLM calls (good for big hordes). A `mind` costs one LLM call per agent per tick, like anyone else.
 - **Requirements:** `Requirement` also accepts `any_conditions` ("at least one of"), e.g. an action that works on a zombie *or* a horde walker.
 
+### Games with players and dungeon masters
+
+Set `SIMCORE_DM_PASSWORD` and only a logged-in dungeon master can use the API and see the
+simulation. A DM creates a game from a scenario: a public briefing, how many players, and a
+template of what a player may edit about their agent (name, profession, personality, goals,
+backstory, secrets, attributes within a point budget, a few skills) and what the DM fixes (where
+they start, items, conditions, group…). Players open the game's link, join with their name and get
+a personal token (stored hashed in `games/`); they see the briefing and the other players' names
+only. The DM launches the game (the scenario plus the players' agents) and decides what to
+publish afterwards: the outcome, each player's diary (only what their agent lived) or the replay.
+
 ### Saved runs
 
 Every run started from the server (`simcore manage`, the dashboard, simcore_ui) is recorded in
@@ -587,6 +598,9 @@ GET  /api/version                — Pinned commit (SIMCORE_REF) and the feature
 GET  /api/runs                   — Recorded runs (newest first): scenario, model, ticks, ending, survivors
 GET  /api/runs/{id}              — One run to replay: {scenario, config, events, meta}
 DELETE /api/runs/{id}            — Delete a recorded run
+POST /api/auth/login             — DM login {password} (when SIMCORE_DM_PASSWORD is set)
+GET  /api/games                  — Games with players (DM): create, edit, close, launch, publish
+GET  /api/play/{code}            — Player API: briefing, join, own agent, published results
 POST /api/inject                 — Inject event {"description": "...", "location": "...", "effects": {...}}
 GET  /api/story                  — Chapters and key moments so far
 POST /api/postmortem/narrative   — Generate LLM narrative from run data

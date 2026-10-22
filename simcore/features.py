@@ -18,6 +18,8 @@ FEATURES = [
     "artifacts",  # visible / drops items, holds rules with {holder}, count.item
     "contact_contagion",  # contagion via contact
     "runs",  # every run is recorded: GET /api/runs, GET/DELETE /api/runs/{id}
+    "games",  # games with players who configure their own agent (/api/games, /api/play)
+    "auth",  # SIMCORE_DM_PASSWORD: only dungeon masters see the simulation
 ]
 
 
