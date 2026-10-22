@@ -354,7 +354,7 @@ def create_app(engine: SimulationEngine | None = None,
     # ------------------------------------------------------------------
 
     login_limit = auth.RateLimit()
-    join_limit = auth.RateLimit(limit=20, window=60.0)
+    join_limit = auth.RateLimit(limit=30, window=60.0)
 
     def _games():
         if server_state.get("games") is None:
@@ -362,7 +362,9 @@ def create_app(engine: SimulationEngine | None = None,
         return server_state["games"]
 
     def _client(request: Request) -> str:
-        return request.client.host if request.client else "?"
+        # Behind the UI's nginx every request comes from it: it passes the real address along.
+        real = request.headers.get("X-Real-IP", "").strip()
+        return real or (request.client.host if request.client else "?")
 
     @app.get("/api/auth/me")
     async def auth_me(request: Request):
@@ -378,8 +380,9 @@ def create_app(engine: SimulationEngine | None = None,
         if not auth.check_password(str(payload.get("password", ""))):
             raise HTTPException(401, "Contraseña incorrecta.")
         response = JSONResponse({"dm": True})
+        https = request.headers.get("X-Forwarded-Proto", request.url.scheme) == "https"
         response.set_cookie(auth.COOKIE, auth.make_session(), max_age=auth.SESSION_SECONDS,
-                            httponly=True, samesite="strict", secure=request.url.scheme == "https")
+                            httponly=True, samesite="strict", secure=https)
         return response
 
     @app.post("/api/auth/logout")
