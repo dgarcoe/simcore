@@ -17,6 +17,7 @@ FEATURES = [
     "rpg",  # attributes, d20 checks, experience and levels
     "artifacts",  # visible / drops items, holds rules with {holder}, count.item
     "contact_contagion",  # contagion via contact
+    "runs",  # every run is recorded: GET /api/runs, GET/DELETE /api/runs/{id}
 ]
 
 

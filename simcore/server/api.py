@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from simcore.engine.events import SimEvent
@@ -58,6 +59,7 @@ def create_app(engine: SimulationEngine | None = None,
     """Create the FastAPI application."""
     app = FastAPI(title="SimCore Dashboard", version="0.1.0")
 
+    app.add_middleware(GZipMiddleware, minimum_size=4096)  # recorded runs are big JSON
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -72,7 +74,15 @@ def create_app(engine: SimulationEngine | None = None,
         "server": None,
         "scenario_store": scenario_store,
         "websockets": [],  # all active WS connections, regardless of sim state
+        "runs": None,  # RunStore: every run started here is recorded
+        "recorder": None,  # the current run's RunRecorder
     }
+
+    def _runs():
+        if server_state["runs"] is None:
+            from simcore.server.runs import RunStore
+            server_state["runs"] = RunStore()
+        return server_state["runs"]
 
     @app.on_event("startup")
     async def startup():
@@ -296,9 +306,19 @@ def create_app(engine: SimulationEngine | None = None,
         if old_engine:
             old_engine.stop()
             await asyncio.sleep(0.1)  # let the old engine exit its loop
+        old_recorder = server_state.get("recorder")
+        if old_recorder and not old_recorder.closed:
+            old_recorder.close("interrupted")
 
         new_engine = SimulationEngine(config, demo_mode=demo, tick_delay=speed)
         server_state["engine"] = new_engine
+        try:
+            record = store.get(scenario_id) or {}
+            server_state["recorder"] = _runs().start(
+                new_engine, record.get("data"), scenario_id=scenario_id, demo=demo)
+        except Exception as e:  # never block a run because it can't be recorded
+            logger.warning(f"Can't record this run: {e}")
+            server_state["recorder"] = None
 
         srv = server_state.get("server")
         if srv:
@@ -310,6 +330,34 @@ def create_app(engine: SimulationEngine | None = None,
         asyncio.create_task(new_engine.run())
 
         return {"status": "started", "scenario_id": scenario_id, "name": config.name}
+
+    # ------------------------------------------------------------------
+    # Recorded runs
+    # ------------------------------------------------------------------
+
+    @app.get("/api/runs")
+    async def list_runs():
+        return {"runs": _runs().list()}
+
+    @app.get("/api/runs/{run_id}")
+    async def get_run(run_id: str):
+        try:
+            run = _runs().load(run_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        if run is None:
+            raise HTTPException(404, f"Run '{run_id}' not found")
+        return run
+
+    @app.delete("/api/runs/{run_id}")
+    async def delete_run(run_id: str):
+        current = server_state.get("recorder")
+        if current and current.id == run_id and not current.closed:
+            raise HTTPException(409, "This run is still being recorded")
+        try:
+            return {"deleted": _runs().delete(run_id)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     # ------------------------------------------------------------------
     # WebSocket

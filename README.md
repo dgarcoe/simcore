@@ -493,6 +493,13 @@ conditions:
 - **`mind` vs `controller: rules`:** `rules` still exists as the cheap option, with no LLM calls (good for big hordes). A `mind` costs one LLM call per agent per tick, like anyone else.
 - **Requirements:** `Requirement` also accepts `any_conditions` ("at least one of"), e.g. an action that works on a zombie *or* a horde walker.
 
+### Saved runs
+
+Every run started from the server (`simcore manage`, the dashboard, simcore_ui) is recorded in
+`runs/` (or `SIMCORE_RUNS_DIR`): one gzipped JSON line per event plus a small `.meta.json`. The last
+50 are kept (`SIMCORE_RUNS_KEEP`; 0 keeps them all). `GET /api/runs/{id}` returns the whole run in
+the replay format simcore_ui plays, so any run can be watched again, scrubbed and downloaded.
+
 ### Conflict
 
 Agents are told the story is fiction (characters may lie, steal, fight or kill when it fits them)
@@ -577,6 +584,9 @@ GET  /api/agents/{id}             — One agent
 GET  /api/environment            — Places and world variables
 GET  /api/clock                  — Current tick and time
 GET  /api/version                — Pinned commit (SIMCORE_REF) and the features this Simcore supports
+GET  /api/runs                   — Recorded runs (newest first): scenario, model, ticks, ending, survivors
+GET  /api/runs/{id}              — One run to replay: {scenario, config, events, meta}
+DELETE /api/runs/{id}            — Delete a recorded run
 POST /api/inject                 — Inject event {"description": "...", "location": "...", "effects": {...}}
 GET  /api/story                  — Chapters and key moments so far
 POST /api/postmortem/narrative   — Generate LLM narrative from run data

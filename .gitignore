@@ -35,3 +35,4 @@ dashboard/dist/
 .pytest_cache/
 .coverage
 htmlcov/
+runs/
