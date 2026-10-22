@@ -354,14 +354,8 @@ def dm_view(game: dict) -> dict:
 # ── After the run: what a player may see of it ────────────────────────────
 
 _PEOPLE_KEYS = ("agent", "target", "to", "from", "by", "other", "holder")
-_WORLD = {
-    "scheduled_event",
-    "injected_event",
-    "rule_fired",
-    "simulation_start",
-    "simulation_end",
-    "story_chapter",
-}
+# Public news everyone learns. (Not the narrator's chapters: they tell everyone's story.)
+_WORLD = {"scheduled_event", "injected_event", "rule_fired", "simulation_start", "simulation_end"}
 
 
 def diary(events: list[dict], name: str) -> list[dict]:
