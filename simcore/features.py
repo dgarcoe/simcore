@@ -20,6 +20,7 @@ FEATURES = [
     "runs",  # every run is recorded: GET /api/runs, GET/DELETE /api/runs/{id}
     "games",  # games with players who configure their own agent (/api/games, /api/play)
     "auth",  # SIMCORE_DM_PASSWORD: only dungeon masters see the simulation
+    "recipes",  # actions.where, pending actions with what they need and where it lies
 ]
 
 
