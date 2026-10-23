@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import random
 from dataclasses import dataclass
 from typing import Any
@@ -382,6 +383,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 # "disparar", "curar"… named after a scenario action: that one wins over the built-in
                 action = Action(type=ActionType.CUSTOM, target=action.target, content=action.content,
                                 reasoning=action.reasoning, parameters={"name": alias})
+            action = self._read_violence(agent, action)
             action = self._enforce_mind(agent, action, tick)
 
         # Apply action
@@ -800,6 +802,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
 
     def _present(self, agent: Agent, name: str) -> Agent | None:
         other = self._find_agent_by_name(name)
+        if other is None and isinstance(name, str):  # "Marcos (zombi)", "Marcos, el pastor"
+            other = self._find_agent_by_name(re.split(r"\s*[(\[,]", name, maxsplit=1)[0])
         if other and other.alive and other.id != agent.id and other.location == agent.location:
             return other
         return None

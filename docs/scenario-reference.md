@@ -444,6 +444,9 @@ story (bite, repair the radio, barricade the door, brew an antidote).
   coveted item) with their odds and the scenario actions they could use on them. Write those
   relationships, rival groups and goals in the YAML when you want conflict; small models (3B) still
   fight much less than 7B+ ones.
+  When a model describes violence in free text instead of naming an action ("Golpeo a Marcos con la
+  pala"), it becomes the scenario action named like the verb (`golpear`), or else the built-in
+  attack, with its roll; so does a target written with extra words ("Marcos (zombi)").
 - **Effect targets:** they are agents, `location:<place>` or `all`, never a group. To act on a group,
   test it with `count: {faction: X, …}` and use world variables.
 - **Votes:** they only open when an agent uses `call_vote` (after `from`). To force a decision at a

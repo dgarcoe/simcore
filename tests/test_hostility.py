@@ -95,3 +95,43 @@ def test_violent_verbs_and_a_verb_with_its_target_are_understood():
     assert b.type == ActionType.ATTACK and b.target == "Tobías"
     c = p._parse_action('{"action": "apuñalar", "target": "Elvira"}')
     assert c.type == ActionType.ATTACK
+
+
+def test_free_text_violence_becomes_a_real_attack():
+    from simcore.agents.actions import Action
+
+    e = make_engine()
+    rodrigo = e._find_agent_by_name("Rodrigo")
+    told = Action(type=ActionType.CUSTOM, content="Apuñalo a Tobías con la daga")
+    a = e._read_violence(rodrigo, told)
+    assert a.type == ActionType.ATTACK and a.target == "Tobías"
+    talk = Action(type=ActionType.INTERACT, target="Elvira", content="le pego un empujón")
+    assert e._read_violence(rodrigo, talk).type == ActionType.ATTACK
+    # A scenario action named like the verb wins (robar is not violent; envenenar needs poison).
+    rodrigo.state.resources["veneno"] = 1
+    poison = Action(type=ActionType.CUSTOM, content="ataco a Martín")
+    assert e._read_violence(rodrigo, poison).type == ActionType.ATTACK
+    # Peaceful or aimless texts are left alone.
+    for text in ("No quiero pelear con nadie", "Golpeo la mesa con rabia", "hablo con Elvira"):
+        same = Action(type=ActionType.CUSTOM, content=text)
+        assert e._read_violence(rodrigo, same) is same
+
+
+def test_a_target_with_a_description_is_still_found():
+    e = make_engine()
+    rodrigo = e._find_agent_by_name("Rodrigo")
+    assert e._present(rodrigo, "Tobías (el que tiene el sello)").name == "Tobías"
+    assert e._present(rodrigo, "Elvira, la viuda").name == "Elvira"
+
+
+def test_a_free_text_hit_uses_the_scenario_action_with_its_roll():
+    from simcore.agents.actions import Action
+
+    data = json.loads(json.dumps(WORLD))
+    data["actions"]["golpear"] = {"check": {"attribute": "strength", "dc": 5},
+                                  "on_target": {"health": -0.3}}
+    e = SimulationEngine(SimulationConfig.model_validate(data), demo_mode=True)
+    rodrigo = e._find_agent_by_name("Rodrigo")
+    a = e._read_violence(rodrigo, Action(type=ActionType.CUSTOM, content="Golpeo a Tobías"))
+    assert a.type == ActionType.CUSTOM and a.parameters == {"name": "golpear"}
+    assert a.target == "Tobías"

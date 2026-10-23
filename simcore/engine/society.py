@@ -70,6 +70,24 @@ EMOTION_ALIASES = {
 }
 
 
+# A violent verb at the start of a free-text action ("Golpeo a Marcos con la pala", "le disparo").
+VIOLENT = re.compile(
+    r"^(golpe\w*|atac\w*|ataqu\w*|dispar\w*|muerd\w*|mord\w*|apunal\w*|acuchill\w*|"
+    r"peg[oaue]\w*|mat(o|a|as|an|ar|amos|e)|hier\w*|her(ir|ido|ida)|agred\w*|estrangul\w*|pele\w*|"
+    r"luch\w*|apale\w*|attack\w*|hits?|hitting|shoot\w*|shot|stab\w*|punch\w*|strikes?|struck|"
+    r"kill\w*|bites?|bit|slash\w*|fight\w*)$"
+)
+_SKIP = {"le", "lo", "la", "les", "los", "las", "yo", "i", "a", "al", "me", "se", "voy", "to", "and",
+         "y"}
+_STEM = {"muerd": "mord", "ataq": "atac", "shot": "shoo", "bit": "bite"}
+
+
+def violent_verb(text: str) -> str:
+    """The violent verb a free-text action starts with ("golpeo"), or ""."""
+    words = [w for w in re.findall(r"[a-z]+", _plain(text or ""))[:4] if w not in _SKIP]
+    return words[0] if words and VIOLENT.match(words[0]) else ""
+
+
 def _plain(text: str) -> str:
     return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower().strip()
 
@@ -367,6 +385,34 @@ class SocietyMixin:
         action.target = victim.name
         action.parameters = {**(action.parameters or {}), **params}
         return action
+
+    def _read_violence(self, agent: Agent, action: Action) -> Action:
+        """A free-text action that describes hurting someone here ("Golpeo a Marcos con la pala")
+        becomes the real thing: the scenario action it names if the agent can do it, else attack."""
+        if action.type not in (ActionType.CUSTOM, ActionType.INTERACT) or (
+            action.type == ActionType.CUSTOM and (action.parameters or {}).get("name")
+        ):
+            return action
+        verb = violent_verb(action.content)
+        if not verb:
+            return action
+        victim = self._present(agent, action.target or "")
+        if victim is None:
+            text = f" {_plain(action.content)} "
+            named = [o for o in self._witnesses(agent) if f" {_plain(o.name)} " in text
+                     or f" {_plain(o.name).split()[0]} " in text]
+            victim = named[0] if len(named) == 1 else None
+        if victim is None:
+            return action
+        stem = verb[:5] if verb[:5] in _STEM else verb[:4]
+        stem = _STEM.get(stem, stem)
+        for name, act in self._available_actions(agent):
+            if act.target == "agent" and _plain(name).startswith(stem) \
+                    and self._meets(victim, act.target_requires):
+                return Action(type=ActionType.CUSTOM, target=victim.name, content=action.content,
+                              reasoning=action.reasoning, parameters={"name": name})
+        return Action(type=ActionType.ATTACK, target=victim.name, content=action.content,
+                      reasoning=action.reasoning)
 
     def _healing_item(self, agent: Agent, patient: Agent) -> str:
         best, score = "", 0.0
