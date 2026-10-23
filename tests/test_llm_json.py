@@ -81,7 +81,9 @@ def test_unreadable_answer_is_retried_and_not_cached(monkeypatch, tmp_path):
     action = asyncio.run(p.decide("sys", "user"))
     assert action.type == ActionType.WORK and len(calls) == 2
     assert list(stored.values()) == [GOOD]
-    assert calls[0]["response_format"] == {"type": "json_object"}
+    # Ollama: its own JSON mode, and no thinking (qwen3 would spend the answer thinking)
+    assert calls[0]["format"] == "json" and calls[0]["think"] is False
+    assert "response_format" not in calls[0] and "frequency_penalty" not in calls[0]
 
 
 def test_gives_up_after_a_few_unreadable_answers(monkeypatch):
@@ -91,7 +93,7 @@ def test_gives_up_after_a_few_unreadable_answers(monkeypatch):
     action = asyncio.run(LLMProvider(model="gpt-4o-mini", cache_enabled=False).decide("s", "u"))
     assert action.type == ActionType.WAIT and action.reasoning.startswith("Parse error:")
     assert len(calls) == 3
-    assert "response_format" not in calls[0]
+    assert calls[0]["response_format"] == {"type": "json_object"}
 
 
 def test_broken_cached_answer_is_ignored(monkeypatch):
