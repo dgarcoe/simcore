@@ -78,7 +78,7 @@ class ConditionsMixin:
                 return name
         return ""
 
-    def _meets(self, agent: Agent, req: Requirement) -> bool:
+    def _meets(self, agent: Agent, req: Requirement, items: bool = True) -> bool:
         held = agent.state.conditions
         if any(c not in held for c in req.conditions):
             return False
@@ -90,7 +90,8 @@ class ConditionsMixin:
             prof = agent.persona.profession.lower()
             if not any(p.lower() in prof for p in req.professions):
                 return False
-        return all(agent.state.resources.get(k, 0) + 1e-9 >= v for k, v in req.items.items())
+        have = agent.state.resources
+        return not items or all(have.get(k, 0) + 1e-9 >= v for k, v in req.items.items())
 
     async def _condition_event(self, agent: Agent, name: str, change: str, tick: int,
                                cause: str = "", into: str = "") -> None:
@@ -218,7 +219,58 @@ class ConditionsMixin:
                 tgt = "target: a person here" if act.target == "agent" else "no target"
                 cost = ", ".join(f"{k} x{fmt_amount(v)}" for k, v in act.cost.items())
                 lines.append(f"- {name} ({tgt}{f'; costs {cost}' if cost else ''}): {act.description or name}")
+        pending = self._pending_actions(agent)
+        if pending:
+            lines.append("Things you could do once you have what they need (gather it first):")
+            lines.extend(pending)
         return "\n".join(lines)
+
+    @staticmethod
+    def _needed(act: ActionConfig) -> dict[str, float]:
+        """Items an action asks for: carried (who.items) or spent (cost), whichever is more."""
+        out = dict(act.who.items)
+        for k, v in act.cost.items():
+            out[k] = max(out.get(k, 0), v)
+        return out
+
+    def _pending_actions(self, agent: Agent, limit: int = 3) -> list[str]:
+        """Actions the agent is fit for but lacks the items or place for, and where to get them.
+
+        The ones they are closest to (already carrying part of what they need) come first.
+        """
+        have = agent.state.resources
+        found: list[tuple[tuple, str, ActionConfig, dict[str, float]]] = []
+        for name, act in self.config.actions.items():
+            if not self._meets(agent, act.who, items=False):
+                continue
+            needed = self._needed(act)
+            missing = {k: v for k, v in needed.items() if have.get(k, 0) + 1e-9 < v}
+            away = bool(act.where) and agent.location not in act.where
+            if not missing and not away:
+                continue
+            started = any(have.get(k, 0) > 0 for k in needed) or (bool(act.where) and not away)
+            found.append(((not started, len(missing)), name, act, missing))
+        lines: list[str] = []
+        for _, name, act, missing in sorted(found, key=lambda f: f[0])[:limit]:
+            parts = [f"needs {k} x{fmt_amount(v)}, you have {fmt_amount(have.get(k, 0))}"
+                     for k, v in missing.items()]
+            if act.where:
+                parts.append("at " + " or ".join(act.where))
+            lines.append(f"- {name} ({'; '.join(parts)}): {act.description or name}")
+            for item in missing:
+                lines.append(f"  {item}: {self._where_to_find(agent, item)}")
+        return lines
+
+    def _where_to_find(self, agent: Agent, item: str) -> str:
+        found = [f"in {p.name} x{fmt_amount(p.stock[item])}"
+                 for p in self.environment.locations.values() if p.stock.get(item, 0) >= 1]
+        # Who carries it: people here, or anyone if it is in plain sight or everyone knows all.
+        cfg = self.config.items.get(item)
+        known = self.living_agents if (cfg and cfg.visible) or self.config.awareness == "full" \
+            else self._witnesses(agent)
+        found += [f"carried by {o.name}" for o in known
+                  if o is not agent and o.state.resources.get(item, 0) >= 1]
+        return ", ".join(found) if found else "nowhere you know of; search or ask around"
 
     def _available_actions(self, agent: Agent) -> list[tuple[str, ActionConfig]]:
         out = []
@@ -226,6 +278,8 @@ class ConditionsMixin:
             if not self._meets(agent, act.who):
                 continue
             if any(agent.state.resources.get(k, 0) + 1e-9 < v for k, v in act.cost.items()):
+                continue
+            if act.where and agent.location not in act.where:
                 continue
             if act.target == "agent" and not any(self._meets(o, act.target_requires)
                                                  for o in self._witnesses(agent)):
@@ -250,6 +304,8 @@ class ConditionsMixin:
 
         if not self._meets(agent, act.who):
             return refuse("I'm not able to")
+        if act.where and agent.location not in act.where:
+            return refuse(f"it has to be done at {' or '.join(act.where)}")
         target = None
         if act.target == "agent":
             target = self._present(agent, action.target)

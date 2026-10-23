@@ -193,6 +193,7 @@ class ActionConfig(BaseModel):
     chance: float = Field(1.0, ge=0.0, le=1.0)  # probability of success
     check: CheckConfig | None = None  # rpg: a roll decides instead of the chance
     cost: dict[str, float] = Field(default_factory=dict)  # items spent (even on failure)
+    where: list[str] = Field(default_factory=list)  # only at these places (a workshop…)
     on_target: Outcome = Field(default_factory=Outcome)
     on_self: Outcome = Field(default_factory=Outcome)
     world: dict[str, object] = Field(default_factory=dict)  # global_state updates on success
@@ -554,6 +555,8 @@ class SimulationConfig(BaseModel):
                 problems.extend(f"condition {name} allows unknown action '{a}'"
                                 for a in cond.mind.actions if a not in builtin and a not in acts)
         for name, act in self.actions.items():
+            problems.extend(f"action {name} happens at unknown place '{p}'" for p in act.where
+                            if p not in {loc.name for loc in self.environment.locations})
             for req in (act.who, act.target_requires):
                 need(req.conditions + req.any_conditions + req.not_conditions, f"action {name}")
             for out in (act.on_target, act.on_self):

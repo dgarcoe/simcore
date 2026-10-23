@@ -778,6 +778,10 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             text = name + (f" ({item.description})" if item.description else "")
             if use:
                 text += f" — use: {use}{'' if item.consumable else ', reusable'}"
+            needed_for = [act for act, cfg in self.config.actions.items()
+                          if name in self._needed(cfg)]
+            if needed_for:
+                text += f" — needed for: {', '.join(needed_for)}"
             parts.append(text)
         return "; ".join(parts)
 

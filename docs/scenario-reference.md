@@ -241,8 +241,12 @@ If the agent has a `rules` condition, the rules win over any `mind`.
 
 ## `actions`
 
-Scenario-specific actions. The LLM is offered each one only when the agent meets `who`. Do not reuse
-a built-in action name.
+Scenario-specific actions. The LLM is offered each one only when the agent meets `who`, carries the
+`cost` and stands at one of the `where` places. Do not reuse a built-in action name.
+
+When the agent meets `who` except for its items, or is somewhere else, the action is listed as
+something they could do once they gather what it needs. The list says what is missing, where it lies
+(place stocks) and who here carries it. Each item also says which actions need it.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -253,6 +257,7 @@ a built-in action name.
 | `chance` | 0..1 | 1 | Probability of success |
 | `check` | Check | none | rpg: a d20 roll decides instead of `chance` |
 | `cost` | `{item: n}` | `{}` | Spent even on failure |
+| `where` | list of places | `[]` (anywhere) | Only at these places (a workshop, the radio tower) |
 | `on_target` | Outcome | | On success, to the target |
 | `on_self` | Outcome | | On success, to the actor |
 | `world` | map | `{}` | World variables set on success |
@@ -465,6 +470,28 @@ rules:
   - when: {global: {repostado: {eq: true}}}
     then: {adjust: {combustible: 0.4}, repostado: false}
 ```
+
+**Crafting / recipes** (gather three radio parts and repair the radio at the tower; turn planks and
+nails into a barricade):
+
+```yaml
+actions:
+  reparar_radio:
+    description: reparar la radio de la torre con tres juegos de piezas
+    target: none
+    who: {professions: [electricist], items: {piezas_radio: 3}}
+    cost: {piezas_radio: 3}
+    where: [Torre de radio]
+    world: {radio: reparada}
+  hacer_barricada:
+    description: clavar tablones para hacer una barricada
+    target: none
+    cost: {tablones: 2, clavos: 1}
+    on_self: {items: {barricada: 1}}
+```
+
+Spread the parts over places' `stock` and agents' `resources`. Agents are told what each pending
+recipe still needs and where it lies, so they go and gather it.
 
 **A timer that starts when something happens** (the march takes 12 hours):
 

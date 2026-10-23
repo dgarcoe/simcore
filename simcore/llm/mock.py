@@ -161,6 +161,11 @@ class MockLLMProvider:
         if special:
             return special
 
+        # Gather what a pending action needs (radio parts…) or go where it has to be done.
+        gather = self._recipe_decision(user_prompt, location)
+        if gather:
+            return gather
+
         # Items: answer offers, pick up, use, give or offer things.
         item_action = self._item_decision(user_prompt, nearby)
         if item_action:
@@ -387,9 +392,48 @@ class MockLLMProvider:
         return Action(type=ActionType.CUSTOM, target=target, parameters={"name": name},
                       reasoning=f"This is the moment to {name}")
 
-    def _item_decision(self, prompt: str, nearby: list[str]) -> Action | None:
-        inventory = _items_after(prompt, "Your inventory: ")
+    def _recipe_decision(self, prompt: str, location: str, chance: float = 0.35) -> Action | None:
+        """Work towards an action listed as something to do once its items are gathered."""
+        marker = "Things you could do once you have what they need"
+        # Memories repeat old observations: read only the current one.
+        prompt = prompt.rsplit("Current situation:", 1)[-1]
+        if marker not in prompt or self._rng.random() > chance:
+            return None
+        block = prompt.split(marker, 1)[1].split("\n", 1)[1]
         stock = _items_after(prompt, "Items you can take here: ")
+        pending = re.findall(r"^- ([\w-]+) \((.*?)\):", block, re.MULTILINE)
+        for _name, details in pending:
+            missing = re.findall(r"needs ([\w-]+) x", details)
+            for item in missing:
+                if item in stock:
+                    return Action(type=ActionType.TAKE, item=item, amount=1,
+                                  reasoning=f"I need {item}")
+                found = re.search(rf"^  {re.escape(item)}: (.*)$", block, re.MULTILINE)
+                carriers = re.findall(r"carried by ([^,]+)", found.group(1)) if found else []
+                spare = sorted(set(_items_after(prompt, "Your inventory: "))
+                               - set(re.findall(r"needs ([\w-]+) x", block)))
+                if carriers and spare:
+                    return Action(type=ActionType.TRADE, target=carriers[0], item=spare[0],
+                                  amount=1, ask_item=item, ask_amount=1,
+                                  reasoning=f"I need {carriers[0]}'s {item}")
+                places = re.findall(r"in (.+?) x[\d.]+", found.group(1)) if found else []
+                places = [p for p in places if p != location]
+                if places:
+                    return Action(type=ActionType.MOVE, target=self._rng.choice(places),
+                                  reasoning=f"There is {item} there")
+            at = re.search(r"at (.+)$", details)
+            if not missing and at:
+                return Action(type=ActionType.MOVE, target=at.group(1).split(" or ")[0],
+                              reasoning="That's where it has to be done")
+        return None
+
+    def _item_decision(self, prompt: str, nearby: list[str]) -> Action | None:
+        # What a pending action still needs is kept, not given or traded away.
+        keep = set(re.findall(r"needs ([\w-]+) x", prompt))
+        held = _items_after(prompt, "Your inventory: ")
+        inventory = {k: v for k, v in held.items() if k not in keep}
+        # Memories repeat old observations: what lies here is in the current one.
+        stock = _items_after(prompt.rsplit("Current situation:", 1)[-1], "Items you can take here: ")
         usable = re.findall(r"(?:^|; |Item guide: )([\w-]+)(?: \([^)]*\))? — use:", prompt)
         hurt = _names_after(prompt, "Visibly hurt or sick: ")
         roll = self._rng.random()
