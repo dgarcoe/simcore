@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import unicodedata
 import random
 from dataclasses import dataclass
 from typing import Any
@@ -63,6 +64,24 @@ def _add(inv: dict[str, float], item: str, amount: float) -> None:
 
 def _has(inv: dict[str, float], item: str, amount: float) -> bool:
     return bool(item) and inv.get(item, 0) + 1e-9 >= amount
+
+
+_ITEM_STOP = {"de", "del", "la", "el", "los", "las", "of", "the", "a", "un", "una", "unos", "unas"}
+
+
+def _item_key(text: str) -> str:
+    """'Tablones de madera', 'tablón', 'piezas_radio' → comparable words in the singular."""
+    plain = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
+    words = []
+    for w in re.findall(r"[a-z0-9]+", plain):
+        if w in _ITEM_STOP:
+            continue
+        if len(w) > 4 and w.endswith("es") and w[-3] not in "aeiou":
+            w = w[:-2]  # tablones → tablon, botiquines → botiquin
+        elif len(w) > 3 and w.endswith("s"):
+            w = w[:-1]  # piezas → pieza, cartuchos → cartucho
+        words.append(w)
+    return " ".join(words)
 
 
 SOCIETY_ACTIONS = {
@@ -800,6 +819,26 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         agent.observe(f"I tried to {action.describe()} but couldn't: {why}.", tick, importance=0.5)
         return Action(type=ActionType.WAIT, reasoning=f"Couldn't {action.describe()}: {why}. {action.reasoning}".strip())
 
+    def _resolve_item(self, name: str, pool: dict[str, float], texts: tuple[str, ...]) -> str:
+        """The item an LLM means: 'Tablón' → tablones; with none, one named in its target or text.
+
+        Items in `pool` (what lies here, or what the agent carries) are preferred."""
+        known = list(dict.fromkeys([*pool, *self.config.items]))
+        if name in known:
+            return name
+        key = _item_key(name)
+        if key:
+            for cand in known:
+                if _item_key(cand) == key:
+                    return cand
+        for text in (name, *texts):
+            words = f" {_item_key(text)} "
+            if words.strip():
+                for cand in sorted(known, key=lambda c: (c not in pool, -len(c))):
+                    if f" {_item_key(cand)} " in words:
+                        return cand
+        return name
+
     def _present(self, agent: Agent, name: str) -> Agent | None:
         other = self._find_agent_by_name(name)
         if other is None and isinstance(name, str):  # "Marcos (zombi)", "Marcos, el pastor"
@@ -813,8 +852,16 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         actually done (WAIT with the reason when it isn't possible)."""
         inv = agent.state.resources
         place = self.environment.get_location(agent.location)
-        item, amount = action.item, action.amount
         kind = action.type
+        stock = place.stock if place else {}
+        texts = (action.target, action.content, action.reasoning)
+        if kind in (ActionType.GIVE, ActionType.DROP, ActionType.USE, ActionType.TRADE,
+                    ActionType.TAKE):
+            pool = stock if kind == ActionType.TAKE else inv
+            action.item = self._resolve_item(action.item, pool, texts)
+        if kind == ActionType.TRADE and action.ask_item:
+            action.ask_item = self._resolve_item(action.ask_item, {}, ())
+        item, amount = action.item, action.amount
 
         if kind in (ActionType.GIVE, ActionType.DROP, ActionType.TRADE) and not _has(inv, item, amount):
             return await self._refuse(agent, action, tick, f"I don't have {fmt_amount(amount)} {item or 'of that'}")
@@ -833,8 +880,17 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             return action
 
         if kind == ActionType.TAKE:
+            if place and item and 0 < place.stock.get(item, 0) < amount:
+                amount = action.amount = place.stock[item]  # take what there is
             if not place or not _has(place.stock, item, amount):
-                return await self._refuse(agent, action, tick, f"there is no {fmt_amount(amount)} {item or 'such item'} here")
+                here = ", ".join(f"{k} x{fmt_amount(v)}" for k, v in stock.items() if v > 0) \
+                    or "nothing"
+                if not item:
+                    why = f'say which item in "item"; here you can take: {here}'
+                else:
+                    elsewhere = self._where_to_find(agent, item)
+                    why = f"there is no {item} here (you can take: {here}; {item}: {elsewhere})"
+                return await self._refuse(agent, action, tick, why)
             _add(place.stock, item, -amount)
             _add(inv, item, amount)
             await self._transfer(tick, "take", item, amount, f"location:{place.name}", agent.name, place.name)

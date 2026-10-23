@@ -206,3 +206,38 @@ def test_loaders_read_the_item_catalog(tmp_path):
     for cfg in (load_config(path), _dict_to_config(raw)):
         assert cfg.items["food"].on_use == {"energy": 0.2}
         assert cfg.environment.locations[0].stock == {"food": 1}
+
+
+def make_church():
+    return make_engine(
+        items={"tablones": {}, "piezas_radio": {}, "comida": {"on_use": {"energy": 0.3}}},
+        environment={"locations": [
+            {"name": "Iglesia", "stock": {"tablones": 6, "comida": 1}},
+            {"name": "Granja", "stock": {"tablones": 2, "piezas_radio": 1}},
+        ]},
+        agents=[{"name": "Lola", "starting_location": "Iglesia"}],
+    )
+
+
+@pytest.mark.parametrize("kw", [
+    {"item": "", "target": "tablones"},  # the item went into the target
+    {"item": "", "content": "Cojo 2 tablones para atrancar la puerta"},
+    {"item": "Tablón"},  # capital letter, singular, accent
+    {"item": "tablones de madera"},
+])
+def test_take_understands_the_item_the_llm_means(kw):
+    e = make_church()
+    done = act(e, "lola", type=ActionType.TAKE, amount=2, **kw)
+    assert done.type == ActionType.TAKE and done.item == "tablones"
+    assert inv(e, "lola") == {"tablones": 2}
+    assert e.environment.locations["Iglesia"].stock["tablones"] == 4
+
+
+def test_take_gets_what_there_is_and_explains_what_is_missing():
+    e = make_church()
+    done = act(e, "lola", type=ActionType.TAKE, item="comida", amount=3)
+    assert done.type == ActionType.TAKE and inv(e, "lola") == {"comida": 1}
+    nothing = act(e, "lola", type=ActionType.TAKE, item="", amount=2)
+    assert 'say which item in "item"' in nothing.reasoning and "tablones x6" in nothing.reasoning
+    away = act(e, "lola", type=ActionType.TAKE, item="piezas de radio")
+    assert "there is no piezas_radio here" in away.reasoning and "in Granja x1" in away.reasoning
