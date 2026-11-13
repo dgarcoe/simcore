@@ -486,6 +486,9 @@ class LLMConfig(BaseModel):
     # Penalize repetition. 0.0 = off, 0.5-1.5 typical. Helps small local models.
     frequency_penalty: float = 0.0
     presence_penalty: float = 0.0
+    # Ollama's context window in tokens. Its default (2048–4096) cuts a long decision prompt
+    # from the start, where the character, its state and its inventory are; 0 = Ollama's own.
+    num_ctx: int = Field(8192, ge=0)
 
 
 class SimulationConfig(BaseModel):

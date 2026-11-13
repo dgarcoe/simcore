@@ -356,7 +356,8 @@ class MockLLMProvider:
             if carriers and roll < 0.5:
                 target = carriers[0]
                 block = prompt.split("Special actions you can do now", 1)[1] if "Special actions you can do now" in prompt else ""
-                moves = re.findall(r"^- ([\w-]+) \(target: a person here", block, re.MULTILINE)
+                moves = [m for m, who in re.findall(r"^- ([\w-]+) \(target: ([^;)]*)", block, re.MULTILINE)
+                         if target in who.split(" or ")]
                 if moves and roll < 0.3:
                     return Action(type=ActionType.CUSTOM, target=target, parameters={"name": self._rng.choice(moves)},
                                   reasoning=f"{target} has the {prize}")
@@ -376,14 +377,16 @@ class MockLLMProvider:
         if "Special actions you can do now" not in prompt or self._rng.random() > chance:
             return None
         block = prompt.split("Special actions you can do now", 1)[1]
-        options = re.findall(r"^- ([\w-]+) \((target: a person here|no target)", block, re.MULTILINE)
+        options = re.findall(r"^- ([\w-]+) \((target: [^;)]*|no target)", block, re.MULTILINE)
         if not options:
             return None
         name, kind = self._rng.choice(options)
         target = ""
         if kind.startswith("target"):
-            if not nearby:
+            fit = [n for n in kind[len("target: "):].split(" or ") if n in nearby] or nearby
+            if not fit:
                 return None
+            nearby = fit
             # Prefer someone who visibly stands out (a zombie, someone bleeding…).
             noticed = re.findall(r"(?:^You notice: |; )([^;(]+?) \(", prompt.split("You notice: ", 1)[1].split("\n", 1)[0]) \
                 if "You notice: " in prompt else []

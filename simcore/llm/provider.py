@@ -34,7 +34,41 @@ ACTION_ALIASES = {
     "form_group": "found_group", "unirse": "join", "join_group": "join", "salir": "leave",
     "leave_group": "leave", "abandonar": "leave", "expulsar": "expel", "kick": "expel",
     "votar": "vote", "convocar_votacion": "call_vote", "votacion": "call_vote", "start_vote": "call_vote",
-    "robar": "steal"
+    "robar": "steal",
+    # Built-in actions in Spanish and Portuguese: told to answer in another language, models
+    # translate the action too ("ir", "coger", "hablar").
+    "ir": "move", "irse": "move", "moverse": "move", "mover": "move", "caminar": "move",
+    "andar": "move", "viajar": "move", "volver": "move", "dirigirse": "move", "acudir": "move",
+    "hablar": "speak", "decir": "speak", "gritar": "speak", "preguntar": "speak",
+    "responder": "speak", "contestar": "speak", "charlar": "speak", "conversar": "speak",
+    "falar": "speak", "dizer": "speak",
+    "perguntar": "speak", "interactuar": "interact", "interagir": "interact",
+    "esperar": "wait", "quedarse": "wait", "aguardar": "wait",
+    "observar": "observe", "mirar": "observe", "vigilar": "observe", "explorar": "observe",
+    "olhar": "observe", "trabajar": "work", "trabalhar": "work",
+    "descansar": "rest", "dormir": "rest", "reposar": "rest",
+    "dar": "give", "entregar": "give", "regalar": "give",
+    "coger": "take", "tomar": "take", "recoger": "take", "agarrar": "take", "pillar": "take",
+    "apanhar": "take", "recolher": "take",
+    "soltar": "drop", "dejar": "drop", "tirar": "drop", "largar": "drop", "deixar": "drop",
+    "usar": "use", "utilizar": "use", "comer": "use", "beber": "use",
+    "intercambiar": "trade", "comerciar": "trade", "negociar": "trade", "ofrecer": "trade",
+    "vender": "trade", "comprar": "trade", "trocar": "trade", "oferecer": "trade",
+    "aceptar": "accept", "aceitar": "accept", "rechazar": "decline", "recusar": "decline",
+    "publicar": "post",
+}
+
+# Keys a model writes in the story's language instead of the English ones.
+_KEY_ALIASES = {
+    "acción": "action", "accion": "action", "ação": "action", "acao": "action",
+    "accao": "action",
+    "objetivo": "target", "destino": "target", "alvo": "target", "destinatario": "target",
+    "contenido": "content", "conteudo": "content", "conteúdo": "content", "mensaje": "content",
+    "mensagem": "content", "texto": "content", "objeto": "item", "artículo": "item",
+    "cantidad": "amount", "quantidade": "amount", "razonamiento": "reasoning",
+    "raciocinio": "reasoning", "raciocínio": "reasoning", "razón": "reasoning",
+    "razon": "reasoning",
+    "motivo": "reasoning", "lugar": "place",
 }
 
 
@@ -213,6 +247,7 @@ class LLMProvider:
         cache_enabled: bool = True,
         frequency_penalty: float = 0.0,
         presence_penalty: float = 0.0,
+        num_ctx: int = 8192,
     ):
         self.model = model
         self.reflection_model = reflection_model or model
@@ -220,6 +255,7 @@ class LLMProvider:
         self.max_tokens = max_tokens
         self.frequency_penalty = frequency_penalty
         self.presence_penalty = presence_penalty
+        self.num_ctx = num_ctx
         self.cache = ResponseCache() if cache_enabled else None
         self._call_count = 0
         self._cache_hits = 0
@@ -355,6 +391,8 @@ class LLMProvider:
         }
 
         if model.startswith(("ollama/", "ollama_chat/")):
+            if self.num_ctx:
+                params["num_ctx"] = self.num_ctx  # the whole prompt fits, not just its end
             return params
 
         params.update({
@@ -598,7 +636,20 @@ class LLMProvider:
     def _parse_action_strict(self, content: str) -> Action:
         """Parse LLM JSON response into an Action; raises if it can't be read."""
         data = _load_json_object(content)
-        raw_action = str(data.get("action", "wait")).strip()
+        for key, english in _KEY_ALIASES.items():
+            if key in data and english not in data:
+                data[english] = data.pop(key)
+        if isinstance(data.get("action"), dict):  # {"action": {"name": "golpear", "target": "Ana"}}
+            inner = data.pop("action")
+            data = {**inner, **{k: v for k, v in data.items() if v not in ("", None)}}
+            data["action"] = inner.get("name") or inner.get("action") or inner.get("type") or ""
+        if "action" not in data or not str(data["action"]).strip():
+            raise ValueError('no "action" in the answer')
+        raw_action = str(data["action"]).strip()
+        if "|" in raw_action:  # copied the list of options: take the first one
+            raw_action = next((p.strip() for p in raw_action.split("|") if p.strip()), "wait")
+        # "reparar_radio()", "Reparar radio.", "golpear!": the name alone
+        raw_action = re.sub(r"\(\s*\)$|[.!¡¿?]+$", "", raw_action).strip().strip("\"'`")
         params = dict(data["parameters"]) if isinstance(data.get("parameters"), dict) else {}
         if " " in raw_action:  # "attack Ana", "atacar a Ana": the verb, and the rest as the target
             head, _, rest = raw_action.partition(" ")
@@ -614,11 +665,13 @@ class LLMProvider:
         try:
             action_type = ActionType(raw_action.lower())
         except ValueError:
-            if not raw_action or not raw_action.replace("_", "").replace("-", "").isalnum():
+            # "reparar radio" → reparar_radio
+            name = re.sub(r"[\s-]+", "_", raw_action.strip()).lower()
+            if not name or not name.replace("_", "").isalnum():
                 raise
             # Possibly a scenario action (bite, shoot…): the engine checks it exists.
             action_type = ActionType.CUSTOM
-            params["name"] = raw_action.lower()
+            params["name"] = name
 
         def field(key: str, default=""):
             value = data.get(key, params.get(key))

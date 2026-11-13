@@ -134,6 +134,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 cache_enabled=config.llm.cache,
                 frequency_penalty=config.llm.frequency_penalty,
                 presence_penalty=config.llm.presence_penalty,
+                num_ctx=config.llm.num_ctx,
             )
         self.interaction_resolver = InteractionResolver()
         self._running = False
@@ -388,10 +389,13 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 await self._maybe_plan(agent, observation, tick, lang)
                 if (agent.state.plan_tick, agent.state.plan_step) != had:
                     observation = self._build_observation(agent, tick, lang)
-            agent.observe(observation, tick, importance=0.3)
             found = self._mind(agent)
             mind = found[1] if found else None
-            prompt = agent.build_prompt(observation, language=lang, mind=mind)
+            special = [n for n, _ in self._available_actions(agent)] if self.config.actions else []
+            prompt = agent.build_prompt(observation, language=lang, mind=mind, special=special)
+            # Memory keeps a one-line note, not the whole situation: old copies of "People here",
+            # "Items you can take here" or "Special actions" made models act on a past place.
+            agent.observe(self._where_note(agent), tick, importance=0.3)
             persona_prompt = f"{agent.persona_prompt(mind)}\n\n{FICTION_FRAME}"
             if lang != "en":
                 from simcore.llm.prompts import language_directive
@@ -403,6 +407,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 action = Action(type=ActionType.CUSTOM, target=action.target, content=action.content,
                                 reasoning=action.reasoning, parameters={"name": alias})
             action = self._read_violence(agent, action)
+            action = self._read_free_text(agent, action)
             action = self._enforce_mind(agent, action, tick)
 
         # Apply action
@@ -514,6 +519,20 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         "en": 'Social networks are active. Use the "post" action to publish publicly at any time — your message reaches everyone immediately.',
     }
 
+    def _where_note(self, agent: Agent) -> str:
+        """'At Granja with Dra. Inés, Marcos.': what an agent remembers of where it was."""
+        nearby = self.environment.get_nearby_agents(agent.location, agent.id)
+        here = [self.agents[aid].name for aid in nearby if aid in self.agents]
+        return f"At {agent.location} " + (f"with {', '.join(here)}." if here else "alone.")
+
+    @staticmethod
+    def _world_context(state: dict) -> str:
+        """World variables for the prompt without the UI's (ui_theme…): 'hora: noche; luz: yes'."""
+        def show(v: object) -> str:
+            return "yes" if v is True else "no" if v is False else str(v)
+        return "; ".join(f"{k}: {show(v)}" for k, v in state.items()
+                         if not str(k).startswith(("ui_", "_")))
+
     def _build_observation(self, agent: Agent, tick: int, lang: str = "en") -> str:
         """Build what an agent currently observes."""
         location = self.environment.get_location(agent.location)
@@ -539,7 +558,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             available_locations=available_locations,
             known_agents=known_agents,
             recent_events=event_descriptions[-5:],
-            global_context=str(self.environment.global_state) if self.environment.global_state else "",
+            global_context=self._world_context(self.environment.global_state),
             social_network_hint=self._SOCIAL_HINT.get(lang, self._SOCIAL_HINT["en"]) if self._has_virtual else "",
         )
         stock = {k: v for k, v in location.stock.items() if v > 0}

@@ -23,7 +23,9 @@ def language_directive(code: str) -> str:
     return (
         f"IMPORTANT: Respond ONLY in {name}. ALL text in the JSON — dialogue, post content, "
         f"trade messages, reasoning, reflections — must be written in {name}. "
-        f"NEVER use English in content fields. Keep only the JSON keys in English."
+        f"NEVER use English in content fields. Keep the JSON keys in English, and write the "
+        f'value of "action" exactly as one of the options given (never translated); names of '
+        f"people, places and items exactly as written."
     )
 
 

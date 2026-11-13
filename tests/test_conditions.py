@@ -198,7 +198,7 @@ def test_prompt_lists_conditions_visible_states_and_special_actions():
     obs = e._build_observation(ana, 1)
     assert "Your conditions: infected — fever and bite marks (in 2 ticks you will become zombie)." in obs
     assert "You notice: Zed (a shambling corpse)." in obs
-    assert "- shoot (target: a person here; costs ammo x1): Shoot someone here" in obs
+    assert "- shoot (target: Zed; costs ammo x1" in obs and "): Shoot someone here" in obs
     assert "barricade" not in obs  # not a carpenter
     state = e.get_state()
     assert state["agents"]["ana"]["state"]["conditions"] == {"infected": 2}
@@ -223,7 +223,11 @@ def test_parser_maps_unknown_names_to_scenario_actions():
     # "shoot" is also the built-in attack; the engine keeps a scenario's own "shoot" (alias_of)
     a = p._parse_action(json.dumps({"action": "Shoot", "target": "Zed"}))
     assert a.type == ActionType.ATTACK and a.parameters["alias_of"] == "shoot"
-    assert p._parse_action(json.dumps({"action": "go away!"})).type == ActionType.WAIT
+    # A name with spaces may be a scenario action written loosely ("reparar radio"): the engine
+    # checks it against the scenario and refuses names it doesn't know.
+    loose = p._parse_action(json.dumps({"action": "go away!"}))
+    assert loose.type == ActionType.CUSTOM and loose.parameters["name"] == "go_away"
+    assert p._parse_action(json.dumps({"action": "go <away>"})).type == ActionType.WAIT
 
 
 def test_demo_run_spreads_the_outbreak():

@@ -97,7 +97,8 @@ class Agent:
             lines.append(f"Your goals now: {', '.join(mind.goals)}.")
         return "\n".join(lines)
 
-    def build_prompt(self, observation: str, language: str = "en", mind=None) -> str:
+    def build_prompt(self, observation: str, language: str = "en", mind=None,
+                     special: list[str] | None = None) -> str:
         """Build the full prompt for LLM decision-making (``mind``: a condition's MindConfig)."""
         from simcore.agents.actions import ActionType
         from simcore.llm.prompts import language_directive
@@ -158,9 +159,10 @@ class Agent:
                 f"If you speak to any of them again, DO NOT start with a greeting — go straight to the point."
             )
 
-        actions = ALL_ACTIONS
+        # The scenario's actions this agent can do now go first: small models copy this list.
+        actions = "|".join(dict.fromkeys([*(special or []), *ALL_ACTIONS.split("|")]))
         if mind is not None:
-            allowed = list(mind.actions) or ALL_ACTIONS.split("|")
+            allowed = list(mind.actions) or actions.split("|")
             if mute:
                 allowed = [a for a in allowed if a not in SPEECH_ACTION_NAMES]
             actions = "|".join(dict.fromkeys(["wait", *allowed]))
@@ -208,7 +210,7 @@ Item rules:
 - "trade": offer "item" x "amount" to "target" in exchange for "ask_item" x "ask_amount". They answer later.
 - "accept" / "decline": answer an offer made to you; "target" is the person who made it.
 - Only use item names you actually have or that are available here.
-- If "Special actions" are listed in your situation, you may use one: put its name in "action".
+- "Special actions" listed in your situation belong to this story: put the name exactly as written in "action" and, if it says "target", one of the people it names in "target".
 
 Target rules (strict):
 - For "move": target MUST be the exact name of an available location (not a person).

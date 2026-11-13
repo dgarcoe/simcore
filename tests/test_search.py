@@ -143,7 +143,16 @@ def test_state_and_parser():
 
 
 def test_demo_run_searches():
-    e = make_engine()
-    e.tick_delay = 0
-    asyncio.run(e.run())
-    assert any(x.type == EventType.AGENT_SEARCH for x in e.events)
+    # The demo starts a search now and then (someone alone, at random): over a few seeds, it does.
+    found = False
+    for seed in range(6):
+        e = SimulationEngine(
+            SimulationConfig.model_validate({**json.loads(json.dumps(WORLD)), "seed": seed}),
+            demo_mode=True,
+        )
+        e.tick_delay = 0
+        e.events = []
+        e.event_bus.on_all(lambda x, e=e: e.events.append(x))
+        asyncio.run(e.run())
+        found = found or any(x.type == EventType.AGENT_SEARCH for x in e.events)
+    assert found

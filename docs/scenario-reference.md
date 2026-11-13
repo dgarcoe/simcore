@@ -84,6 +84,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `temperature` | float | 0.7 | |
 | `max_tokens` | int | 500 | |
 | `frequency_penalty` | float | 0 | 0.5–1.5 helps small local models repeat less |
+| `num_ctx` | int ≥ 0 | 8192 | Ollama only: context window in tokens. Ollama's default (2048–4096) cuts long prompts from the start; 0 keeps it |
 | `presence_penalty` | float | 0 | |
 
 ## `environment`
@@ -243,6 +244,12 @@ If the agent has a `rules` condition, the rules win over any `mind`.
 
 Scenario-specific actions. The LLM is offered each one only when the agent meets `who`, carries the
 `cost` and stands at one of the `where` places. Do not reuse a built-in action name.
+
+Each turn the actions the agent can do now are listed with who they can be done to and their odds
+(`golpear (target: Marcos; success ≈ 65%)`), and their names lead the options of the answer's
+`"action"`. Names written loosely (`Reparar radio`, `reparar_radio()`, `golpear_a_marcos`) and free
+text that starts with the action's verb ("Reparo la radio") are read as the action; free text that
+names no action does nothing, and the agent is told so.
 
 When the agent meets `who` except for its items, or is somewhere else, the action is listed as
 something they could do once they gather what it needs. The list says what is missing, where it lies

@@ -4,6 +4,9 @@ rule-controlled agents. Mixed into SimulationEngine."""
 from __future__ import annotations
 
 import logging
+import os
+import re
+import unicodedata
 from typing import TYPE_CHECKING
 
 from simcore.agents.actions import Action, ActionType, fmt_amount
@@ -22,6 +25,14 @@ SPEECH_ACTIONS = frozenset({
     ActionType.GIVE, ActionType.ACCEPT, ActionType.DECLINE, ActionType.POST,
     ActionType.FOUND_GROUP, ActionType.JOIN, ActionType.EXPEL, ActionType.CALL_VOTE, ActionType.VOTE,
 })
+
+
+_SKIP_WORDS = {"le", "lo", "la", "les", "los", "las", "yo", "i", "a", "al", "me", "se", "voy", "to",
+               "and", "y", "el", "un", "una", "de", "del", "the", "eu", "o", "os", "as", "vou"}
+
+
+def _plain(text: str) -> str:
+    return unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
 
 
 class ConditionsMixin:
@@ -216,14 +227,30 @@ class ConditionsMixin:
         if actions:
             lines.append("Special actions you can do now (use the name as \"action\"):")
             for name, act in actions:
-                tgt = "target: a person here" if act.target == "agent" else "no target"
+                if act.target == "agent":
+                    fit = [o.name for o in self._witnesses(agent)
+                           if self._meets(o, act.target_requires)]
+                    tgt = "target: " + " or ".join(fit)
+                else:
+                    tgt = "no target"
                 cost = ", ".join(f"{k} x{fmt_amount(v)}" for k, v in act.cost.items())
-                lines.append(f"- {name} ({tgt}{f'; costs {cost}' if cost else ''}): {act.description or name}")
+                odds = self._action_odds(agent, act)
+                lines.append(f"- {name} ({tgt}{f'; costs {cost}' if cost else ''}{odds}): "
+                             f"{act.description or name}")
         pending = self._pending_actions(agent)
         if pending:
             lines.append("Things you could do once you have what they need (gather it first):")
             lines.extend(pending)
         return "\n".join(lines)
+
+    def _action_odds(self, agent: Agent, act: ActionConfig) -> str:
+        """'; success ≈ 65%' (the dice with role-playing rules, else the action's chance)."""
+        if act.check and getattr(self, "rpg", False):
+            if act.check.against:
+                return "; opposed roll"
+            p = self._chance(agent, act.check.attribute, act.check.skill or "", act.check.dc)
+            return f"; success ≈ {p:.0%}"
+        return f"; success ≈ {act.chance:.0%}" if act.chance < 1 else ""
 
     @staticmethod
     def _needed(act: ActionConfig) -> dict[str, float]:
@@ -291,6 +318,10 @@ class ConditionsMixin:
 
     async def _apply_custom_action(self, agent: Agent, action: Action, tick: int) -> Action:
         name = str(action.parameters.get("name", ""))
+        if name and name not in self.config.actions:
+            name, rest = self._match_action_name(name)
+            if rest and not action.target:
+                action.target = rest
         act = self.config.actions.get(name)
         if act is None:
             if name:  # the model named an action that doesn't exist
@@ -350,6 +381,61 @@ class ConditionsMixin:
             if other is not target:
                 other.observe(f"{agent.name} {action.content}.", tick, importance=0.6)
         return action
+
+    def _read_free_text(self, agent: Agent, action: Action) -> Action:
+        """A free-text "custom" action ("Reparo la radio", "Atranco las puertas") is the scenario
+        action its verb names; if none fits, nothing happens and the agent is told so."""
+        if action.type != ActionType.CUSTOM or (action.parameters or {}).get("name"):
+            return action
+        text = (action.content or action.target or "").strip()
+        words = [w for w in re.findall(r"[a-z0-9]+", _plain(text)) if w not in _SKIP_WORDS]
+        best, score = "", 0
+        for name in self.config.actions:
+            parts = [p for p in re.findall(r"[a-z0-9]+", _plain(name))]
+            if not words or not parts:
+                continue
+            common = len(os.path.commonprefix([words[0], parts[0]]))
+            if common < 3:
+                continue
+            others = sum(1 for p in parts[1:] if any(w.startswith(p[:4]) for w in words[1:]))
+            if common < 4 and not others:
+                continue
+            if common + 2 * others > score:
+                best, score = name, common + 2 * others
+        if best:
+            act = self.config.actions[best]
+            target = action.target
+            if act.target == "agent" and not self._present(agent, target or ""):
+                said = f" {_plain(text)} "
+                named = [o for o in self._witnesses(agent)
+                         if f" {_plain(o.name).split()[0]} " in said]
+                target = named[0].name if len(named) == 1 else ""
+            return Action(type=ActionType.CUSTOM, target=target if act.target == "agent" else "",
+                          content=action.content, reasoning=action.reasoning,
+                          parameters={"name": best})
+        what = text[:60] or "that"
+        return Action(type=ActionType.WAIT, reasoning=(
+            f"Couldn't {what}: free text is not one of the actions, so nothing happened; "
+            f"put an action name in \"action\". {action.reasoning}").strip())
+
+    def _match_action_name(self, name: str) -> tuple[str, str]:
+        """A scenario action the model named loosely: 'Reparar_Radio', 'reparár radio', or
+        'golpear_a_marcos' (the action, and the rest as its target). Unknown names come back."""
+        def norm(text: str) -> str:
+            plain = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+            return re.sub(r"[^a-z0-9]+", "_", plain).strip("_")
+
+        key = norm(name)
+        for known in self.config.actions:
+            if norm(known) == key:
+                return known, ""
+        for known in sorted(self.config.actions, key=len, reverse=True):
+            k = norm(known)
+            if k and key.startswith(k + "_"):
+                rest = re.sub(r"^(a|al|to|the|on|con|with)_", "", key[len(k) + 1:])
+                who = self._find_agent_by_name(rest.replace("_", " "))
+                return known, who.name if who else ""
+        return name, ""
 
     async def _apply_outcome(self, agent: Agent, out: Outcome, tick: int, cause: str) -> None:
         if out.empty or not agent.alive:
