@@ -68,12 +68,14 @@ def turn(e, name, answer: dict, tick=1):
 
 def test_memory_keeps_a_line_not_the_whole_old_situation():
     e = make_engine()
+    e.environment.get_location("Torre").stock["piezas"] = 2
     turn(e, "Ortega", {"action": "wait"}, 1)
     e._find_agent_by_name("Ortega").location = "Granja"
     prompt, _ = turn(e, "Ortega", {"action": "wait"}, 2)
     # One situation only (the current one), and the past as a one-line note.
     assert prompt.count("People here:") == 1 and prompt.count("Special actions you can do now") <= 1
-    assert "At Torre with Lola, Marcos." in prompt
+    # Who was there, how they looked and what lay there, marked with its tick.
+    assert "[tick 1] At Torre with Lola, Marcos (gruñe). Items there: piezas x2." in prompt
     assert prompt.index("At Torre with") < prompt.index("Current situation:")
 
 

@@ -520,10 +520,22 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
     }
 
     def _where_note(self, agent: Agent) -> str:
-        """'At Granja with Dra. Inés, Marcos.': what an agent remembers of where it was."""
+        """What an agent remembers of where it was, in one line: 'At Granja with Dra. Inés,
+        Marcos (gruñe). Items there: tablones x2.' (who, how they looked, what lay there)."""
         nearby = self.environment.get_nearby_agents(agent.location, agent.id)
-        here = [self.agents[aid].name for aid in nearby if aid in self.agents]
-        return f"At {agent.location} " + (f"with {', '.join(here)}." if here else "alone.")
+        here = []
+        for aid in nearby:
+            other = self.agents.get(aid)
+            if other:
+                looks = self._appearance(other) if self.config.conditions else []
+                here.append(other.name + (f" ({', '.join(looks)})" if looks else ""))
+        note = f"At {agent.location} " + (f"with {', '.join(here)}." if here else "alone.")
+        place = self.environment.get_location(agent.location)
+        stock = {k: v for k, v in (place.stock if place else {}).items() if v > 0}
+        if stock:
+            items = ", ".join(f"{k} x{fmt_amount(v)}" for k, v in stock.items())
+            note += f" Items there: {items}."
+        return note
 
     @staticmethod
     def _world_context(state: dict) -> str:

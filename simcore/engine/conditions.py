@@ -217,8 +217,7 @@ class ConditionsMixin:
             lines.append("Your conditions: " + "; ".join(own) + ".")
         seen = []
         for other in self._witnesses(agent):
-            looks = [self._condition(n).appearance for n in other.state.conditions
-                     if self._condition(n) and self._condition(n).appearance]
+            looks = self._appearance(other)
             if looks:
                 seen.append(f"{other.name} ({', '.join(looks)})")
         if seen:
@@ -298,6 +297,11 @@ class ConditionsMixin:
         found += [f"carried by {o.name}" for o in known
                   if o is not agent and o.state.resources.get(item, 0) >= 1]
         return ", ".join(found) if found else "nowhere you know of; search or ask around"
+
+    def _appearance(self, agent: Agent) -> list[str]:
+        """What others see of an agent's conditions ("gruñe", "sangra")."""
+        return [self._condition(n).appearance for n in agent.state.conditions
+                if self._condition(n) and self._condition(n).appearance]
 
     def _available_actions(self, agent: Agent) -> list[tuple[str, ActionConfig]]:
         out = []
