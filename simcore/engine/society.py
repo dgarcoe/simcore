@@ -413,8 +413,8 @@ class SocietyMixin:
         await self._on_harm(agent, victim, tick, "attacked")
         await self._mark_rivals(agent.name, victim.name, tick)
         if hit and victim.state.health <= 0:
-            params["killed"] = True
             await self.kill(victim, tick, f"{agent.name}{with_what}")
+            params["killed" if not victim.alive else "knocked_out"] = True
             if threat:
                 await self._gain_xp(agent, 30, tick)
         action.target = victim.name

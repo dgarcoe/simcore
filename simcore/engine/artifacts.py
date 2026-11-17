@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 HOLDER = "{holder}"
 WINNER = "{winner}"
+MVP = "{mvp}"  # the best individual score, besides the group that wins
 
 
 def fill_holder(value: Any, holder: str, mark: str = HOLDER) -> Any:

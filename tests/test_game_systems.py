@@ -192,7 +192,7 @@ def test_agents_see_their_points_and_what_earns_them():
     e = make_engine(scores=SCORES)
     asyncio.run(e._award(ag(e, "Bruno"), "ladron", e._achievements["ladron"], 1))
     text = e._scores_prompt(ag(e, "Ana"))
-    assert "you have 0. Ranking: Bruno 3, you 0, Carla 0." in text
+    assert "you have 0, 2nd of 3. Ranking: Bruno 3, you 0, Carla 0." in text
     assert "Visitar todos los lugares +10 (still to visit: Iglesia, Bosque)" in text
     assert 'Un rato sin trabajar -1 (every 3 ticks without "work")' in text
     assert e._scores_prompt(ag(e, "Ana")) and not make_engine(

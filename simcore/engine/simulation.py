@@ -24,6 +24,7 @@ from simcore.engine.curses import CursesMixin
 from simcore.engine.minds import MindsMixin
 from simcore.engine.rpg import RpgMixin
 from simcore.engine.scores import ScoresMixin
+from simcore.engine.territories import TerritoriesMixin
 from simcore.engine.search import SearchMixin
 from simcore.engine.society import SocietyMixin
 from simcore.engine.story import StoryMixin
@@ -103,7 +104,7 @@ SOCIETY_ACTIONS = {
 
 class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin,
                        SearchMixin, StoryMixin, SocietyMixin, RpgMixin, ArtifactsMixin, ScoresMixin,
-                       CursesMixin):
+                       CursesMixin, TerritoriesMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -118,6 +119,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self.end_reason = ""
         self.end_message = ""
         self.end_winner = ""
+        self.end_mvp = ""
         self._fired_rules: set[int] = set()
         self._init_conversations()
         self._init_awareness()
@@ -127,6 +129,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_rpg()
         self._init_artifacts()
         self._init_scores()
+        self._init_territories()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -272,6 +275,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self.end_reason = ""
         self.end_message = ""
         self.end_winner = ""
+        self.end_mvp = ""
         while self._running and self.clock.advance():
             if self._paused:
                 await asyncio.sleep(0.1)
@@ -313,6 +317,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             data={"llm_stats": self.llm.stats, "reason": self.end_reason,
                   "message": self.end_message,
                   **({"winner": self.end_winner} if self.end_winner else {}),
+                  **({"mvp": self.end_mvp} if self.end_mvp else {}),
                   **({"scores": self.scores_state()} if self.config.scores.achievements else {})},
         ))
         logger.info(f"Simulation complete. LLM stats: {self.llm.stats}")
@@ -338,6 +343,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             await self._needs_tick(tick)
         await self._hazards_tick(tick)
         await self._curses_tick(tick)
+        await self._territories_tick(tick)
         await self._scores_tick(tick)
         if self.config.rules:
             await self._rules_tick(tick)
@@ -518,7 +524,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 **({"place": action.place, "from": action.parameters.get("from", "")}
                    if action.type == ActionType.INVITE else {}),
                 **({k: v for k, v in action.parameters.items()
-                    if k in ("weapon", "damage", "killed", "hit", "healed", "with", "faction", "invited",
+                    if k in ("weapon", "damage", "killed", "knocked_out", "hit", "healed", "with", "faction", "invited",
                              "question", "options")}
                    if action.type in SOCIETY_ACTIONS else {}),
                 **({"step": action.parameters.get("step", ""), "place": action.parameters.get("place", ""),
@@ -619,6 +625,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                       "" if mute else self._society_prompt(agent, tick),
                       "" if found else self._rpg_prompt(agent),
                       self._artifacts_prompt(agent, tick),
+                      self._territories_prompt(agent),
                       self._scores_prompt(agent),
                       self._curses_prompt(agent),
                       "" if mute else self._conversation_prompt(agent, tick)):
@@ -777,8 +784,12 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         return [a for a in self.living_agents if a.id != agent.id and a.location == agent.location]
 
     async def kill(self, agent: Agent, tick: int, cause: str = "") -> None:
-        """The agent dies: it stops acting and its body stays where it fell."""
+        """The agent dies: it stops acting and its body stays where it fell. With
+        `society.lethal: false` it is knocked out instead."""
         if not agent.alive:
+            return
+        if not self.config.society.lethal:
+            await self._knock_out(agent, tick, cause)
             return
         agent.state.status = "dead"
         agent.state.health = 0.0
@@ -798,6 +809,31 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         await self.event_bus.emit(SimEvent(
             type=EventType.AGENT_DEATH, tick=tick,
             data={"agent": agent.name, "id": agent.id, "location": agent.location, "cause": cause},
+            source=agent.name,
+        ))
+
+    async def _knock_out(self, agent: Agent, tick: int, cause: str = "") -> None:
+        """Instead of dying: drop what falls, get the knockout condition, wake up elsewhere."""
+        ko = self.config.society.knockout
+        fell_at = agent.location
+        agent.state.health = ko.health
+        self._drop_offers(agent)
+        await self._drop_artifacts(agent, tick)
+        for other in self._witnesses(agent):
+            other.observe(f"{agent.name} was knocked out here{f' ({cause})' if cause else ''}.", tick,
+                          importance=0.9)
+        if ko.place and ko.place != fell_at and self.environment.get_location(ko.place):
+            self.environment.move_agent(agent.id, fell_at, ko.place)
+            agent.state.location = ko.place
+        if ko.condition:
+            await self.add_condition(agent, ko.condition, tick, cause or "knocked out")
+        agent.observe(f"I was knocked out{f' ({cause})' if cause else ''} and woke up in {agent.location}.",
+                      tick, importance=0.95)
+        self.environment.log_event(tick, "knockout", f"{agent.name} was knocked out.", location=fell_at,
+                                   agents=[agent.name])
+        await self.event_bus.emit(SimEvent(
+            type=EventType.KNOCKOUT, tick=tick,
+            data={"agent": agent.name, "location": fell_at, "to": agent.location, "cause": cause},
             source=agent.name,
         ))
 
@@ -1205,5 +1241,6 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             "society": self.society_state(),
             "holders": self.holders_state(self.clock.current_tick),
             **({"scores": self.scores_state()} if self.config.scores.achievements else {}),
+            **({"territories": self.territories_state()} if self._territories else {}),
             "llm_stats": self.llm.stats,
         }

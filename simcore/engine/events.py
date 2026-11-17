@@ -48,6 +48,8 @@ class EventType(Enum):
     DICE_ROLL = "dice_roll"
     LEVEL_UP = "level_up"
     SCORE_CHANGE = "score_change"
+    TERRITORY_CHANGE = "territory_change"
+    KNOCKOUT = "agent_knockout"
 
 
 @dataclass

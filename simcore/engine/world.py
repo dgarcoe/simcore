@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from simcore.agents.actions import Action, ActionType
 from simcore.config.schema import HazardConfig, NeedConfig, Requirement, RuleConfig, RuleWhen
-from simcore.engine.artifacts import WINNER, fill_holder
+from simcore.engine.artifacts import MVP, WINNER, fill_holder
 from simcore.engine.effects import parse_effects
 from simcore.engine.events import EventType, SimEvent
 
@@ -206,6 +206,8 @@ class WorldMixin:
             return False
         if w.score is not None and not self._score_leaders(w.score):
             return False
+        if w.territories is not None and not self._territory_winners(w.territories):
+            return False
         if w.any and not any(self._when_holds(alt, tick) for alt in w.any):
             return False
         return True
@@ -235,6 +237,12 @@ class WorldMixin:
                 return best[0]
             if w.count is not None and w.count.faction:
                 return w.count.faction
+            if w.territories is not None and (groups := self._territory_winners(w.territories)):
+                return groups[0]
+        if rule.winner == "group":
+            return " & ".join(self._top_groups())
+        if rule.winner == "person":
+            return " & ".join(self._top_scorers())
         alive = self.living_agents
         if len(alive) == 1:
             return alive[0].name
@@ -259,6 +267,12 @@ class WorldMixin:
                 then = fill_holder(then, winner or "nadie", WINNER)
                 if "end" in then:
                     self.end_winner = winner
+            if MVP in str(description) or MVP in str(then) or ("end" in then and self._achievements):
+                mvp = " & ".join(self._top_scorers(alive_only=False))
+                description = fill_holder(description, mvp or "nadie", MVP)
+                then = fill_holder(then, mvp or "nadie", MVP)
+                if "end" in then:
+                    self.end_mvp = mvp
             if description:
                 self.environment.log_event(tick, "rule", description)
                 for agent in self.living_agents:

@@ -37,8 +37,9 @@ class ScoresMixin:
         names = [a.name for a in self.agents.values() if a.name in alive or a.name in self._scores]
         return sorted(((n, self._score_of(n)) for n in names), key=lambda x: (-x[1], x[0]))
 
-    def _top_scorers(self) -> list[str]:
-        ranking = [(n, p) for n, p in self._ranking() if self._find_agent_by_name(n).alive]
+    def _top_scorers(self, alive_only: bool = True) -> list[str]:
+        ranking = [(n, p) for n, p in self._ranking()
+                   if not alive_only or self._find_agent_by_name(n).alive]
         if not ranking:
             return []
         best = ranking[0][1]
@@ -131,6 +132,36 @@ class ScoresMixin:
                     done = self._last_did.get(agent.name, {}).get(w.without, 0)
                     if tick - max(done, last or 0) >= w.every:
                         await self._award(agent, name, ach, tick)
+                elif w.in_territory:
+                    group = self._faction_of(agent.name)
+                    if not group or self._owner_of(agent.location) != group:
+                        continue
+                    if not self._earned_once(agent, name) or (
+                        ach.repeat and tick - last >= w.every
+                    ):
+                        await self._award(agent, name, ach, tick)
+
+    async def _score_capture(self, agent: Agent, tick: int) -> None:
+        """The agent was there when its group took a territory."""
+        for name, ach in self._achievements.items():
+            if ach.when.captures and (ach.repeat or not self._earned_once(agent, name)):
+                await self._award(agent, name, ach, tick)
+
+    def _group_ranking(self) -> list[tuple[str, int]]:
+        """Groups by their members' points plus `territories.group_points` per territory held."""
+        bonus = self.config.territories.group_points
+        out = []
+        for group, f in self._factions.items():
+            points = sum(self._score_of(m) for m in f["members"])
+            points += bonus * len(self._held_by(group)) if hasattr(self, "_held_by") else 0
+            out.append((group, points))
+        return sorted(out, key=lambda x: (-x[1], x[0]))
+
+    def _top_groups(self) -> list[str]:
+        ranking = self._group_ranking()
+        if not ranking:
+            return []
+        return [g for g, p in ranking if p == ranking[0][1]]
 
     async def _scores_at_end(self, tick: int) -> None:
         for agent in self.living_agents:
@@ -143,10 +174,18 @@ class ScoresMixin:
             return ""
         ranking = self._ranking()
         top = ", ".join(f"{'you' if n == agent.name else n} {p}" for n, p in ranking[:5])
+        place = next((i + 1 for i, (n, _) in enumerate(ranking) if n == agent.name), 0)
         lines = [
-            f"Points (the story rewards these): you have {self._score_of(agent.name)}. "
-            f"Ranking: {top}."
+            f"Points (the story rewards these): you have {self._score_of(agent.name)}, "
+            f"{_ordinal(place)} of {len(ranking)}. Ranking: {top}."
         ]
+        groups = self._group_ranking()
+        if groups:
+            mine = self._faction_of(agent.name)
+            held = (lambda g: f" ({len(self._held_by(g))} places)") if getattr(self, "_territories", None) \
+                else (lambda g: "")
+            lines.append("Groups: " + ", ".join(
+                f"{g}{' (yours)' if g == mine else ''} {p}{held(g)}" for g, p in groups[:6]) + ".")
         gain, lose = [], []
         for name, ach in self._achievements.items():
             if ach.points >= 0 and self._earned_once(agent, name) and not ach.repeat:
@@ -174,5 +213,11 @@ class ScoresMixin:
             return {}
         return {
             "ranking": [{"agent": n, "points": p} for n, p in self._ranking()],
+            **({"groups": [{"group": g, "points": p} for g, p in self._group_ranking()]}
+               if self._factions else {}),
             "earned": {n: dict(e) for n, e in self._earned.items()},
         }
+
+
+def _ordinal(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"

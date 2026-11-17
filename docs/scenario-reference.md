@@ -112,6 +112,8 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `closed` | bool | false | Nobody can enter while closed |
 | `access` | Requirement | none | Only those who meet it can enter (see Requirement) |
 | `hazard` | Hazard | none | Danger here every tick |
+| `territory` | bool | false | Groups fight over it (see `territories`) |
+| `income` | `{item: n}` | `{}` | A territory pays this into its group's stash every `territories.every` ticks |
 
 **Hazard:** `{label, per_tick, condition}`.
 - `label` is the text others see, e.g. "on fire".
@@ -363,6 +365,36 @@ counted (`count.faction`); otherwise the last one alive, otherwise the best scor
 
 **Compare:** any of `lt`, `lte`, `gt`, `gte`, `eq`, `ne`, e.g. `{lte: 0}`.
 
+**Two winners:** `{mvp}` in an ending is the best individual score (dead or alive), so an
+ending can name a winning group and a winning person: `end: "{winner} se quedan con la ciudad; la
+leyenda es {mvp}."`. A rule's `winner: group` makes `{winner}` the best group (its members'
+points plus `territories.group_points` per territory held) and `winner: person` the best score,
+when no test names one. The run's end reports `winner` and `mvp`.
+
+## `territories`
+
+Places with `territory: true` belong to the group with members there and no rival group (agents
+with the `society.knockout` condition don't count). While two groups are there it is contested
+and keeps its owner; a place nobody stands in keeps its owner too. Agents see who holds each
+territory, how many their group holds and what each pays. `when: {territories: {faction, gte,
+ticks}}` is true while a group (any, or `faction`) holds at least `gte` of them for `ticks` ticks
+in a row; `{winner}` is that group.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `every` | int ≥ 1 | 4 | Ticks between incomes (`income` of each held territory into its group's stash) |
+| `group_points` | int | 0 | Points per territory held added to a group's score (the group ranking) |
+
+```yaml
+territories: {every: 4, group_points: 5}
+environment:
+  locations:
+    - {name: El Puerto, territory: true, income: {mercancia: 2}}
+rules:
+  - when: {territories: {gte: 5, ticks: 6}}
+    then: {end: "{winner} se quedan con la ciudad. La leyenda es {mvp}."}
+```
+
 ## `scores`
 
 Points and achievements. With `visible: true` (default) every agent sees its points, the ranking
@@ -383,6 +415,8 @@ and what earns or loses points, so they go for them.
 - `carries: item`: carrying it. `condition: name`: having it. With `repeat`, again each `every`
   ticks (default 24) that it lasts.
 - `alive_at_end: true`: still alive when the run ends.
+- `captures: true`: being there when your group takes a territory (with `repeat`, each time).
+- `in_territory: true`: being in a territory your group holds (with `repeat`, each `every` ticks).
 - `without: action` with `every: n`: a penalty each `n` ticks without doing that action (use a
   negative `points`).
 
@@ -449,6 +483,8 @@ routines:
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `spontaneous_groups` | bool | true | Agents may found groups of their own |
+| `lethal` | bool | true | false: nobody dies; whoever would die is knocked out (`knockout`): wakes up with `knockout.health`, at `knockout.place` (a hospital) if set, with `knockout.condition` if set, dropping what `drops` |
+| `knockout` | `{condition, place, health}` | `{}` | See `lethal` |
 | `group_perks` | bool | true | Belonging pays: each member here adds +1 (up to +2) to rolls and defense (+5% to plain chances), members turn against whoever attacks one of them, and each group has a common stash (`give`/`take` with the group's name as target, from anywhere) |
 | `healers` | list | médic, medic, enfermer, nurse, sanitari, veterinari, doctor, paramedic | Professions (substring) that can `heal` without an item |
 | `heal_removes` | list | herido, injured, wounded, hurt | Conditions a heal removes |

@@ -277,8 +277,30 @@ class VoteConfig(BaseModel):
         return value
 
 
+class KnockoutConfig(BaseModel):
+    """With `society.lethal: false`: what happens to whoever would have died."""
+
+    model_config = {"extra": "forbid"}
+
+    condition: str = ""  # given while they recover (e.g. noqueado, with a duration)
+    place: str = ""  # where they wake up (a hospital); empty = where they fell
+    health: float = Field(0.3, gt=0.0, le=1.0)  # health they wake up with
+
+
+class TerritoriesConfig(BaseModel):
+    """Places marked `territory` that groups fight over."""
+
+    model_config = {"extra": "forbid"}
+
+    every: int = Field(4, ge=1)  # ticks between incomes
+    group_points: int = 0  # per territory held, added to a group's points (group ranking)
+
+
 class SocietyConfig(BaseModel):
     spontaneous_groups: bool = True  # agents may found groups of their own
+    # false: nobody dies; whoever would die is knocked out instead (see `knockout`).
+    lethal: bool = True
+    knockout: KnockoutConfig = Field(default_factory=lambda: KnockoutConfig())
     # Belonging pays: members here add to each other's rolls and defense, share a common stash,
     # and turn against whoever attacks one of them.
     group_perks: bool = True
@@ -407,6 +429,14 @@ class PlaceSpec(BaseModel):
     occupants: Compare | None = None
 
 
+class TerritorySpec(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    faction: str = ""  # only this group; empty = any group
+    gte: int = Field(1, ge=1)
+    ticks: int = Field(1, ge=1)
+
+
 class RuleWhen(BaseModel):
     # An unknown test must fail loudly: ignoring it would leave the rule firing every tick.
     model_config = {"populate_by_name": True, "extra": "forbid"}
@@ -422,6 +452,8 @@ class RuleWhen(BaseModel):
     holds: HoldSpec | None = None
     # Some living agent's points pass the test ({winner} is the best of them).
     score: Compare | None = None
+    # A group holds at least `gte` territories for `ticks` ticks in a row ({winner} is the group).
+    territories: TerritorySpec | None = None
     # Any one of these sets of tests (each like `when`) is enough, on top of the tests above.
     any: list["RuleWhen"] = Field(default_factory=list)
 
@@ -441,6 +473,8 @@ class AchievementWhen(BaseModel):
     carries: str = ""  # carrying this item
     condition: str = ""  # having this condition
     alive_at_end: bool = False  # still alive when the run ends
+    captures: bool = False  # being there when your group takes a territory
+    in_territory: bool = False  # being in a territory of your group (with repeat: each `every`)
     without: str = ""  # penalty: going `every` ticks without doing this action
     every: int = Field(24, ge=1)
 
@@ -469,6 +503,9 @@ class RuleConfig(BaseModel):
     when: RuleWhen = Field(default_factory=RuleWhen)
     then: dict[str, object] = Field(default_factory=dict)
     once: bool = False
+    # Who {winner} names when no test names one: "group" (best group by points and territories),
+    # "person" (best score); empty: decided by the tests (holder, points, territories…).
+    winner: Literal["", "person", "group"] = ""
 
     @field_validator("then")
     @classmethod
@@ -502,6 +539,10 @@ class LocationConfig(BaseModel):
     access: Requirement | None = None
     # Something dangerous here (fire, gas, radiation): hurts or adds a condition every tick.
     hazard: HazardConfig | None = None
+    # A territory groups fight over: it belongs to the group with members here and no rivals,
+    # and pays `income` into that group's common stash every `territories.every` ticks.
+    territory: bool = False
+    income: dict[str, float] = Field(default_factory=dict)
 
     @field_validator("stock", "produces")
     @classmethod
@@ -592,6 +633,8 @@ class SimulationConfig(BaseModel):
     routines: dict[str, dict[str, dict[str, list[str]]]] = Field(default_factory=dict)
     # Points and achievements (see ScoresConfig).
     scores: ScoresConfig = Field(default_factory=ScoresConfig)
+    # Places groups fight over (see LocationConfig.territory).
+    territories: TerritoriesConfig = Field(default_factory=TerritoriesConfig)
 
     @model_validator(mode="after")
     def _check_references(self) -> "SimulationConfig":
@@ -672,6 +715,16 @@ class SimulationConfig(BaseModel):
                                     "(add it to items)")
             if any(w.score for w in rule.when.all_tests()) and not self.scores.achievements:
                 problems.append(f"{where} tests points but there are no scores.achievements")
+        for loc in self.environment.locations:
+            problems.extend(f"place {loc.name} pays unknown item '{i}' (add it to items)"
+                            for i in loc.income if i not in self.items)
+        ko = self.society.knockout
+        need([ko.condition] if ko.condition else [], "society.knockout")
+        if ko.place and ko.place not in places:
+            problems.append(f"society.knockout sends to unknown place '{ko.place}'")
+        if any(w.territories for r in self.rules for w in r.when.all_tests()) and not any(
+                loc.territory for loc in self.environment.locations):
+            problems.append("a rule counts territories but no place is a territory")
         for name, ach in self.scores.achievements.items():
             where, w = f"achievement {name}", ach.when
             if w.action and w.action not in builtin and w.action not in acts:
@@ -684,7 +737,8 @@ class SimulationConfig(BaseModel):
             if w.carries and w.carries not in self.items:
                 problems.append(f"{where} carries unknown item '{w.carries}' (add it to items)")
             need([w.condition] if w.condition else [], where)
-            if not any((w.action, w.visited, w.carries, w.condition, w.alive_at_end, w.without)):
+            if not any((w.action, w.visited, w.carries, w.condition, w.alive_at_end, w.without,
+                        w.captures, w.in_territory)):
                 problems.append(f"{where} has no test in when")
         names = {a.name for a in self.agents}
         for fname, f in self.factions.items():

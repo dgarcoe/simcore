@@ -207,6 +207,8 @@ def _dict_to_config(data: dict):
     sim_data["routines"] = data.get("routines", {})
     if data.get("scores"):
         sim_data["scores"] = data["scores"]
+    if data.get("territories"):
+        sim_data["territories"] = data["territories"]
     if data.get("society"):
         sim_data["society"] = data["society"]
     return SimulationConfig(**sim_data)
