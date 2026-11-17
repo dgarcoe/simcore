@@ -144,8 +144,10 @@ class AwarenessMixin:
             lines.append("Places with nobody there (as far as you know): " + ", ".join(empty) + ".")
 
         if here and speech:
+            hear = ", ".join(o.name for o in shown) + (
+                f" and {len(here) - len(shown)} more" if len(here) > len(shown) else "")
             lines.append(
-                f'If you "speak" here, {", ".join(o.name for o in here)} will hear it. '
+                f'If you "speak" here, {hear} will hear it. '
                 '"whisper" and "interact" are private. To talk alone, "invite" someone to a '
                 'quiet place ("place") or "follow" them.'
             )

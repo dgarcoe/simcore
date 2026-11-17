@@ -229,6 +229,8 @@ class ConditionsMixin:
                 if act.target == "agent":
                     fit = [o.name for o in self._witnesses(agent)
                            if self._meets(o, act.target_requires)]
+                    if len(fit) > 6:  # many people here: a few, and how many more
+                        fit = [*fit[:6], f"{len(fit) - 6} others here"]
                     tgt = "target: " + " or ".join(fit)
                 else:
                     tgt = "no target"

@@ -447,6 +447,12 @@ class MockLLMProvider:
             return None
         block = prompt.split("Special actions you can do now", 1)[1]
         options = re.findall(r"^- ([\w-]+) \((target: [^;)]*|no target)", block, re.MULTILINE)
+        # What the points say costs points is left alone (a sensible player would too).
+        lose = [w.split(" -")[0].strip().lower() for w in _list_line(prompt, "Lose: ")]
+        if lose:
+            said = dict(re.findall(r"^- ([\w-]+) \([^)]*\): (.+)$", block, re.MULTILINE))
+            options = [o for o in options
+                       if not any(said.get(o[0], "").lower().startswith(x) for x in lose)]
         if not options:
             return None
         name, kind = self._rng.choice(options)
@@ -657,3 +663,11 @@ def _list_after(prompt: str, marker: str) -> list[str]:
             break
         out.append(line[2:].strip())
     return out
+
+
+def _list_line(prompt: str, marker: str) -> list[str]:
+    """'Lose: a -3; b -2.' → ['a -3', 'b -2']."""
+    if marker not in prompt:
+        return []
+    line = prompt[prompt.index(marker) + len(marker):].split("\n", 1)[0].rstrip(".")
+    return [x.strip() for x in line.split(";") if x.strip()]

@@ -593,6 +593,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             if other:
                 looks = self._appearance(other) if self.config.conditions else []
                 here.append(other.name + (f" ({', '.join(looks)})" if looks else ""))
+        if self._big_cast() and len(here) > 8:
+            here = [*here[:8], f"and {len(here) - 8} more"]
         note = f"At {agent.location} " + (f"with {', '.join(here)}." if here else "alone.")
         place = self.environment.get_location(agent.location)
         stock = {k: v for k, v in (place.stock if place else {}).items() if v > 0}
