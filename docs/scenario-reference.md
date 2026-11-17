@@ -67,6 +67,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `seed` | int | 42 | Random seed (same seed + demo mode = same run) |
 | `language` | text | `en` | ISO code agents speak and think in (`es`, `pt`, `en`…) |
 | `planning` | bool | false | Each agent writes a short plan every `plan_every` ticks (one LLM call per plan) |
+| `pause_each_day` | bool | false | Pause at the end of each day (an `intermission` event); games with players use it so players read their day and change their agent's orders before the DM resumes |
 | `plan_every` | int ≥ 1 | 8 | Ticks between plans |
 | `story` | bool | false | A narrator writes a chapter every `chapter_every` ticks (one LLM call each) |
 | `chapter_every` | int ≥ 1 | 24 | Ticks per chapter |
@@ -85,6 +86,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `max_tokens` | int | 500 | |
 | `frequency_penalty` | float | 0 | 0.5–1.5 helps small local models repeat less |
 | `num_ctx` | int ≥ 0 | 8192 | Ollama only: context window in tokens. Ollama's default (2048–4096) cuts long prompts from the start; 0 keeps it |
+| `max_concurrency` | int ≥ 0 | 0 | At most this many LLM calls at once (0 = no limit); with many agents and a local server (Ollama), set it near `OLLAMA_NUM_PARALLEL` so calls don't time out waiting |
 | `presence_penalty` | float | 0 | |
 
 ## `environment`
@@ -143,6 +145,37 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `attributes` | map | derived | rpg: `strength`, `dexterity`, `constitution`, `intelligence`, `wisdom`, `charisma`, each 1..20. Missing ones are derived from personality and profession |
 | `skills` | list | by profession | rpg: any of `athletics`, `intimidation`, `stealth`, `sleight_of_hand`, `medicine`, `perception`, `insight`, `investigation`, `persuasion`, `deception` |
 | `level` | int 1..20 | 1 | rpg: starting level |
+| `orders` | Orders | none | What the player who configured the agent tells it to do to win (below) |
+
+**Orders** (games where each player configures an agent): the agent reads them every turn, first
+and above everything else.
+- `style`: aggressive, negotiator, sneaky, loyal, opportunist, businessman (or `agresivo`,
+  `negociador`, `sigiloso`, `leal`, `oportunista`, `empresario`), told with what it means; any other
+  word is told as is.
+- `priorities`: what matters most, in order (e.g. "que gane mi banda", "ser la leyenda").
+- `risk`: `careful`, `bold` or `reckless` (how good the odds must be to fight or steal).
+- `red_lines` (up to 5): `{action, target}` it never does, enforced (the action is refused): a
+  built-in or scenario action, optionally only against someone (`my_group` = members of its own
+  group); `{action: leave}` = never leaving its group.
+- `plans` (up to 5): `{when, then}`; `then` is an instruction (up to 200 characters) told as
+  "ACTIVE NOW" while every test in `when` holds: `day` (from this day on), `group_rank` and
+  `my_rank` (Compare on its group's / its own place, 1 = first), `carries`, `health` (Compare),
+  `knocked_out` (bool), `group_territories` (Compare).
+- `text`: free text up to 400 characters.
+
+An active plan or a red line that stops an action is reported as an `orders` event.
+
+```yaml
+orders:
+  style: sigiloso
+  priorities: [ser la leyenda, que gane mi banda]
+  risk: careful
+  red_lines: [{action: attack, target: my_group}, {action: leave}]
+  plans:
+    - {when: {day: 3, group_rank: {gte: 3}}, then: "Pásate a la banda que vaya primera"}
+    - {when: {carries: maletin}, then: "Escóndete en Las Torres con el maletín"}
+  text: "Nada de peleas a lo loco: palos limpios y a casa."
+```
 
 ## `events`
 

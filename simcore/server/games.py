@@ -23,6 +23,8 @@ from simcore.engine.rpg import ATTRIBUTES, SKILLS
 
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I
 EDITABLE = (
+    "orders",
+    "faction",
     "name",
     "profession",
     "age",
@@ -56,8 +58,11 @@ DEFAULT_TEMPLATE = {
     "professions": [],  # allowed professions; empty = free text
     "max_text": 600,
     "max_goals": 4,
+    # groups a player may choose (with "faction" editable); empty = any of the scenario's
+    "factions": [],
 }
-STATUSES = ("open", "closed", "running", "finished")
+STATUSES = ("open", "closed", "running", "intermission", "finished")
+MAX_PLAYERS = 100
 _ID = re.compile(r"^[a-f0-9]{12}$")
 
 
@@ -136,12 +141,28 @@ def check_agent(agent: dict, template: dict, taken: set[str]) -> dict:
         out["skills"] = skills
     if "age" in out:
         out["age"] = max(14, min(99, int(out["age"] or 30)))
+    if "faction" in out:
+        out["faction"] = str(out["faction"] or "").strip()
+        if t["factions"] and out["faction"] and out["faction"] not in t["factions"]:
+            raise GameError(f"Banda no permitida: elige entre {', '.join(t['factions'])}.")
+    if "orders" in out:
+        out["orders"] = check_orders(out["orders"])
     # Must be a valid agent once the DM's fixed fields are added.
     try:
         AgentConfig.model_validate({"name": name or "x", **out, **t["fixed"]})
     except ValueError as e:
         raise GameError(f"Ficha no válida: {e}") from e
     return out
+
+
+def check_orders(orders: dict | None) -> dict:
+    """A player's orders for their agent, within the limits (see OrdersConfig)."""
+    from simcore.config.schema import OrdersConfig
+
+    try:
+        return OrdersConfig.model_validate(orders or {}).model_dump(exclude_defaults=True)
+    except ValueError as e:
+        raise GameError(f"Órdenes no válidas: {e}") from e
 
 
 class GameStore:
@@ -211,7 +232,7 @@ class GameStore:
             "briefing": str(payload.get("briefing") or "").strip()[:4000],
             "scenario_id": payload["scenario_id"],
             "template": template_of(payload.get("template")),
-            "max_players": max(1, min(50, int(payload.get("max_players") or 8))),
+            "max_players": max(1, min(MAX_PLAYERS, int(payload.get("max_players") or 8))),
             "status": "open",
             "players": [],
             "run_id": None,
@@ -355,7 +376,8 @@ def dm_view(game: dict) -> dict:
 
 _PEOPLE_KEYS = ("agent", "target", "to", "from", "by", "other", "holder")
 # Public news everyone learns. (Not the narrator's chapters: they tell everyone's story.)
-_WORLD = {"scheduled_event", "injected_event", "rule_fired", "simulation_start", "simulation_end"}
+_WORLD = {"scheduled_event", "injected_event", "rule_fired", "simulation_start", "simulation_end",
+          "territory_change", "intermission"}
 
 
 def diary(events: list[dict], name: str) -> list[dict]:
@@ -397,6 +419,7 @@ def diary(events: list[dict], name: str) -> list[dict]:
                 "agent_spawn",
                 "agent_depart",
                 "agent_move",
+                "agent_knockout",
             )
         ):
             if e.get("source") and e.get("source") != name:

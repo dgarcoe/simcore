@@ -50,6 +50,8 @@ class EventType(Enum):
     SCORE_CHANGE = "score_change"
     TERRITORY_CHANGE = "territory_change"
     KNOCKOUT = "agent_knockout"
+    INTERMISSION = "intermission"  # paused at the end of a day (pause_each_day)
+    ORDERS = "orders"  # a player's conditional plan applies, or a red line stopped an action
 
 
 @dataclass

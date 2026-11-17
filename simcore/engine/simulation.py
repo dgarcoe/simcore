@@ -24,6 +24,7 @@ from simcore.engine.curses import CursesMixin
 from simcore.engine.minds import MindsMixin
 from simcore.engine.rpg import RpgMixin
 from simcore.engine.scores import ScoresMixin
+from simcore.engine.orders import OrdersMixin
 from simcore.engine.territories import TerritoriesMixin
 from simcore.engine.search import SearchMixin
 from simcore.engine.society import SocietyMixin
@@ -104,7 +105,7 @@ SOCIETY_ACTIONS = {
 
 class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin,
                        SearchMixin, StoryMixin, SocietyMixin, RpgMixin, ArtifactsMixin, ScoresMixin,
-                       CursesMixin, TerritoriesMixin):
+                       CursesMixin, TerritoriesMixin, OrdersMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -130,6 +131,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_artifacts()
         self._init_scores()
         self._init_territories()
+        self._init_orders()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -147,6 +149,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 presence_penalty=config.llm.presence_penalty,
                 num_ctx=config.llm.num_ctx,
             )
+        if not demo_mode and config.llm.max_concurrency:
+            self._limit_llm(config.llm.max_concurrency)
         self.interaction_resolver = InteractionResolver()
         self._running = False
         self._paused = False
@@ -293,6 +297,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             finally:
                 self._tick_task = None
             await self._story_after_tick(self.clock.current_tick)
+            await self._end_of_day(self.clock.current_tick)
 
             if not self.living_agents and not any(t > self.clock.current_tick for t in self._arrivals):
                 self.end_reason = "no_agents_left"
@@ -321,6 +326,35 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                   **({"scores": self.scores_state()} if self.config.scores.achievements else {})},
         ))
         logger.info(f"Simulation complete. LLM stats: {self.llm.stats}")
+
+    def _limit_llm(self, n: int) -> None:
+        """At most `n` calls to the LLM at once (decisions, plans, reflections, chronicle…)."""
+        slots = asyncio.Semaphore(n)
+        for name in ("decide", "plan", "reflect", "translate", "chronicle", "postmortem"):
+            call = getattr(self.llm, name, None)
+            if call is None or not asyncio.iscoroutinefunction(call):
+                continue
+
+            async def limited(*args, _call=call, **kwargs):
+                async with slots:
+                    return await _call(*args, **kwargs)
+
+            setattr(self.llm, name, limited)
+
+    async def _end_of_day(self, tick: int) -> None:
+        """With `pause_each_day`: stop at the end of each day until resumed."""
+        if not self.config.pause_each_day or not self._running or tick >= self.clock.max_ticks:
+            return
+        per_day = max(1, 1440 // max(1, self.clock.tick_duration_minutes))
+        if tick % per_day:
+            return
+        self._paused = True
+        await self.event_bus.emit(SimEvent(
+            type=EventType.INTERMISSION, tick=tick,
+            data={"day": tick // per_day, "next_day": tick // per_day + 1,
+                  **({"scores": self.scores_state()} if self.config.scores.achievements else {}),
+                  **({"territories": self.territories_state()} if self._territories else {})},
+        ))
 
     async def _run_tick(self) -> None:
         """Execute one simulation tick."""
@@ -410,6 +444,9 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 await self._maybe_plan(agent, observation, tick, lang)
                 if (agent.state.plan_tick, agent.state.plan_step) != had:
                     observation = self._build_observation(agent, tick, lang)
+            orders = await self._orders_prompt(agent, tick)
+            if orders:  # first: the player's orders come before everything else
+                observation = f"{orders}\n\n{observation}"
             found = self._mind(agent)
             mind = found[1] if found else None
             special = [n for n, _ in self._available_actions(agent)] if self.config.actions else []
@@ -429,6 +466,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                                 reasoning=action.reasoning, parameters={"name": alias})
             action = self._read_violence(agent, action)
             action = self._read_free_text(agent, action)
+            action = await self._enforce_orders(agent, action, tick)
             action = self._enforce_mind(agent, action, tick)
 
         # Apply action
@@ -524,8 +562,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 **({"place": action.place, "from": action.parameters.get("from", "")}
                    if action.type == ActionType.INVITE else {}),
                 **({k: v for k, v in action.parameters.items()
-                    if k in ("weapon", "damage", "killed", "knocked_out", "hit", "healed", "with", "faction", "invited",
-                             "question", "options")}
+                    if k in ("weapon", "damage", "killed", "knocked_out", "hit", "healed", "with",
+                             "faction", "invited", "question", "options")}
                    if action.type in SOCIETY_ACTIONS else {}),
                 **({"step": action.parameters.get("step", ""), "place": action.parameters.get("place", ""),
                     "from": action.parameters.get("from", "")}
@@ -589,6 +627,11 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
 
         available_locations = self.environment.get_location_names()
         known_agents = [a.name for a in self.living_agents if a.id != agent.id]
+        if self._big_cast():  # many people: those here and those who matter, and how many more
+            keep = [a.name for a in self.living_agents if a.id != agent.id
+                    and (a.location == agent.location or self._matters(agent, a))][:30]
+            if len(keep) < len(known_agents):
+                known_agents = [*keep, f"and {len(known_agents) - len(keep)} others"]
         observation = OBSERVATION_PROMPT.render(
             location_name=location.name,
             location_type=location.type,
@@ -820,17 +863,18 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._drop_offers(agent)
         await self._drop_artifacts(agent, tick)
         for other in self._witnesses(agent):
-            other.observe(f"{agent.name} was knocked out here{f' ({cause})' if cause else ''}.", tick,
-                          importance=0.9)
+            why = f" ({cause})" if cause else ""
+            other.observe(f"{agent.name} was knocked out here{why}.", tick, importance=0.9)
         if ko.place and ko.place != fell_at and self.environment.get_location(ko.place):
             self.environment.move_agent(agent.id, fell_at, ko.place)
             agent.state.location = ko.place
         if ko.condition:
             await self.add_condition(agent, ko.condition, tick, cause or "knocked out")
-        agent.observe(f"I was knocked out{f' ({cause})' if cause else ''} and woke up in {agent.location}.",
-                      tick, importance=0.95)
-        self.environment.log_event(tick, "knockout", f"{agent.name} was knocked out.", location=fell_at,
-                                   agents=[agent.name])
+        why = f" ({cause})" if cause else ""
+        agent.observe(f"I was knocked out{why} and woke up in {agent.location}.", tick,
+                      importance=0.95)
+        self.environment.log_event(tick, "knockout", f"{agent.name} was knocked out.",
+                                   location=fell_at, agents=[agent.name])
         await self.event_bus.emit(SimEvent(
             type=EventType.KNOCKOUT, tick=tick,
             data={"agent": agent.name, "location": fell_at, "to": agent.location, "cause": cause},

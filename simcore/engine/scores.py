@@ -182,8 +182,10 @@ class ScoresMixin:
         groups = self._group_ranking()
         if groups:
             mine = self._faction_of(agent.name)
-            held = (lambda g: f" ({len(self._held_by(g))} places)") if getattr(self, "_territories", None) \
-                else (lambda g: "")
+            fights = bool(getattr(self, "_territories", None))
+
+            def held(g: str) -> str:
+                return f" ({len(self._held_by(g))} places)" if fights else ""
             lines.append("Groups: " + ", ".join(
                 f"{g}{' (yours)' if g == mine else ''} {p}{held(g)}" for g, p in groups[:6]) + ".")
         gain, lose = [], []

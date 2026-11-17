@@ -48,7 +48,12 @@ class RunRecorder:
             "end_reason": "",
             "end_message": "",
             "alive": [],
+            "paused": False,  # between days (pause_each_day)
+            "day": 0,
         }
+        # This run's events while it runs (players' reports between days); dropped at close.
+        self.events: list[dict] = []
+        self.day_starts: list[int] = [0]  # index in `events` where each day starts
         self._file = gzip.open(store.events_path(run_id), "wt", encoding="utf-8")
         self._file.write(json.dumps({"header": header}, ensure_ascii=False, default=str) + "\n")
         self.store.write_meta(self.meta)
@@ -72,6 +77,13 @@ class RunRecorder:
                 for a in data["data"].get("agents", {}).values()
                 if (a.get("status") or a.get("state", {}).get("status") or "alive") == "alive"
             )
+        if event.type == EventType.INTERMISSION:
+            self.meta["paused"] = True
+            self.meta["day"] = int(event.data.get("day") or 0)
+        elif event.type == EventType.TICK_START and self.meta["paused"]:
+            self.meta["paused"] = False
+            self.day_starts.append(len(self.events))
+        self.events.append(json.loads(json.dumps(data, ensure_ascii=False, default=str)))
         try:
             self._file.write(json.dumps(data, ensure_ascii=False, default=str) + "\n")
         except (OSError, ValueError) as e:
@@ -82,6 +94,9 @@ class RunRecorder:
         if event.type == EventType.SIMULATION_END:
             self.meta["end_reason"] = str(event.data.get("reason") or "completed")
             self.meta["end_message"] = str(event.data.get("message") or "")
+            for key in ("winner", "mvp", "scores"):
+                if event.data.get(key):
+                    self.meta[key] = event.data[key]
             self.close("finished")
 
     def close(self, status: str = "interrupted") -> None:
@@ -92,6 +107,8 @@ class RunRecorder:
         except OSError:
             pass
         self._file = None
+        self.events = []
+        self.meta["paused"] = False
         self.meta["status"] = status
         self.meta["ended"] = _now()
         self.store.write_meta(self.meta)

@@ -23,6 +23,8 @@ FEATURES = [
     "recipes",  # actions.where, pending actions with what they need and where it lies
     "game_systems",  # steal one/all, "*" items, scores & achievements, when.any/score, {winner},
     # cursed items, group perks (allies' bonus, common stash, mutual defense)
+    "gangs",  # territories, when.territories, {mvp}, winner: group, society.lethal/knockout
+    "orders",  # agents[].orders from players; pause_each_day with reports and new orders
 ]
 
 

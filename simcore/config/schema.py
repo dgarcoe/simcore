@@ -15,6 +15,51 @@ class PersonalityConfig(BaseModel):
     neuroticism: float = Field(0.5, ge=0.0, le=1.0)
 
 
+class RedLine(BaseModel):
+    """Something the agent never does: an action (built-in or the scenario's), optionally only
+    against someone ("my_group" = members of its own group); `leave` = leaving its group."""
+
+    model_config = {"extra": "forbid"}
+
+    action: str
+    target: str = ""
+
+
+class PlanWhen(BaseModel):
+    """When a conditional plan applies (every test given must hold)."""
+
+    model_config = {"extra": "forbid"}
+
+    day: int | None = Field(None, ge=1)  # from this day on (day 1 = the first)
+    group_rank: Compare | None = None  # its group's place in the group ranking (1 = first)
+    my_rank: Compare | None = None  # its own place in the points ranking
+    carries: str = ""
+    health: Compare | None = None
+    knocked_out: bool | None = None  # just woke up from a knockout (has its condition)
+    group_territories: Compare | None = None  # territories its group holds
+
+
+class Plan(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    when: PlanWhen = Field(default_factory=PlanWhen)
+    then: str = Field(max_length=200)
+
+
+class OrdersConfig(BaseModel):
+    """What the player who configured an agent tells it to do to win; it reads them every turn
+    above everything else. Red lines are enforced; plans are checked against the game each turn."""
+
+    model_config = {"extra": "forbid"}
+
+    style: str = Field("", max_length=40)  # aggressive, negotiator, sneaky, loyal, opportunist…
+    priorities: list[str] = Field(default_factory=list, max_length=6)  # most important first
+    risk: Literal["", "careful", "bold", "reckless"] = ""
+    red_lines: list[RedLine] = Field(default_factory=list, max_length=5)
+    plans: list[Plan] = Field(default_factory=list, max_length=5)
+    text: str = Field("", max_length=400)
+
+
 class AgentConfig(BaseModel):
     name: str
     age: int = 30
@@ -44,6 +89,8 @@ class AgentConfig(BaseModel):
     attributes: dict[str, int] = Field(default_factory=dict)
     skills: list[str] = Field(default_factory=list)
     level: int = Field(1, ge=1, le=20)
+    # Orders from the player who configured it (games with players).
+    orders: OrdersConfig | None = None
 
     @field_validator("attributes")
     @classmethod
@@ -587,6 +634,9 @@ class LLMConfig(BaseModel):
     # Penalize repetition. 0.0 = off, 0.5-1.5 typical. Helps small local models.
     frequency_penalty: float = 0.0
     presence_penalty: float = 0.0
+    # At most this many LLM calls at once (0 = no limit): many agents would otherwise queue up
+    # at a local server and time out.
+    max_concurrency: int = Field(0, ge=0)
     # Ollama's context window in tokens. Its default (2048–4096) cuts a long decision prompt
     # from the start, where the character, its state and its inventory are; 0 = Ollama's own.
     num_ctx: int = Field(8192, ge=0)
@@ -605,6 +655,8 @@ class SimulationConfig(BaseModel):
     language: str = "en"
     # Daily plans: every plan_every ticks each LLM agent writes a short plan (extra LLM calls).
     planning: bool = False
+    # Pause at the end of each day (games with players: they read their day and change orders).
+    pause_each_day: bool = False
     # Role-playing rules: attributes, skills, d20 checks, experience and levels.
     rpg: bool = False
     # The narrator writes a short chapter every chapter_every ticks (one LLM call each).

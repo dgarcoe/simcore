@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 
 from simcore.engine.events import SimEvent
 from simcore.server import auth
-from simcore.server.games import GameError, GameStore, diary, dm_view
+from simcore.server.games import GameError, GameStore, check_orders, diary, dm_view
 from simcore.server.scenarios import _dict_to_config
 from simcore.engine.simulation import SimulationEngine
 
@@ -463,12 +463,23 @@ def create_app(engine: SimulationEngine | None = None,
         except GameError as e:
             raise HTTPException(404, str(e))
 
+    def _live(game: dict):
+        """The game's run while it is being played (its recorder), else None."""
+        current = server_state.get("recorder")
+        if game.get("run_id") and current and current.id == game["run_id"] and not current.closed:
+            return current
+        return None
+
     def _settle(game: dict) -> bool:
         """True once the game's run is over (the game is then marked finished)."""
         if not game.get("run_id"):
             return False
-        current = server_state.get("recorder")
-        if current and current.id == game["run_id"] and not current.closed:
+        live = _live(game)
+        if live is not None:
+            phase = "intermission" if live.meta.get("paused") else "running"
+            if game["status"] != phase:
+                game["status"] = phase
+                _games().save(game)
             return False
         if game["status"] == "running":
             game["status"] = "finished"
@@ -513,6 +524,62 @@ def create_app(engine: SimulationEngine | None = None,
             raise HTTPException(422, str(e))
         return {"agent": player["agent"], "submitted": player["submitted"]}
 
+    def _agent_name(player: dict) -> str:
+        return (player.get("agent") or {}).get("name") or player["display_name"]
+
+    @app.get("/api/play/{code}/report")
+    async def play_report(code: str, request: Request):
+        """Between days: what the player's agent lived that day, and how things stand."""
+        game, player = _player(code, request)
+        _settle(game)
+        live = _live(game)
+        if live is None or not live.meta.get("paused"):
+            raise HTTPException(409, "Solo hay parte entre jornadas.")
+        name = _agent_name(player)
+        today = live.events[live.day_starts[-1]:]
+        pause = next((e for e in reversed(live.events) if e["type"] == "intermission"), {})
+        data = pause.get("data") or {}
+        scores = data.get("scores") or {}
+        ranking = [r["agent"] for r in scores.get("ranking", [])]
+        mine = next((p for p in game["players"] if p["id"] == player["id"]), player)
+        return {
+            "day": data.get("day", live.meta.get("day", 0)),
+            "agent": name,
+            "orders": (mine.get("agent") or {}).get("orders") or {},
+            "points": next((r["points"] for r in scores.get("ranking", [])
+                            if r["agent"] == name), None),
+            "rank": ranking.index(name) + 1 if name in ranking else None,
+            "players": len(ranking),
+            "groups": scores.get("groups", []),
+            "territories": data.get("territories", {}),
+            "diary": {"scenario": {"name": game["title"]}, "events": diary(today, name)},
+        }
+
+    @app.put("/api/play/{code}/orders")
+    async def play_orders(code: str, request: Request, payload: dict = Body(default={})):
+        """New orders: while the game is open, or between days (applied to the running agent)."""
+        game, player = _player(code, request)
+        _settle(game)
+        if "orders" not in game["template"].get("editable", []):
+            raise HTTPException(403, "En esta partida no se dan órdenes al agente.")
+        live = _live(game)
+        if game["status"] != "open" and not (live and live.meta.get("paused")):
+            raise HTTPException(
+                409, "Solo puedes cambiar las órdenes antes de empezar o entre jornadas.")
+        try:
+            orders = check_orders(payload.get("orders"))
+        except GameError as e:
+            raise HTTPException(422, str(e))
+        for p in game["players"]:
+            if p["id"] == player["id"]:
+                p["agent"] = {**(p.get("agent") or {}), "orders": orders}
+        _games().save(game)
+        if live is not None:
+            engine = server_state.get("engine")
+            if engine is not None:
+                engine.set_orders(_agent_name(player), orders or None)
+        return {"orders": orders}
+
     @app.get("/api/play/{code}/results")
     async def play_results(code: str, request: Request):
         game, player = _player(code, request)
@@ -524,11 +591,20 @@ def create_app(engine: SimulationEngine | None = None,
         out: dict = {"status": game["status"], "published": pub, "agent": name}
         meta = run.get("meta") or {}
         if pub["result"]:
+            scores = meta.get("scores") or {}
+            ranking = [r["agent"] for r in scores.get("ranking", [])]
+            mine = next((r["points"] for r in scores.get("ranking", [])
+                         if r["agent"] == name), None)
             out["result"] = {
                 "message": meta.get("end_message", ""),
                 "reason": meta.get("end_reason", ""),
                 "ticks": meta.get("ticks", 0),
                 "alive": name in (meta.get("alive") or []),
+                **({"winner": meta["winner"]} if meta.get("winner") else {}),
+                **({"mvp": meta["mvp"]} if meta.get("mvp") else {}),
+                **({"points": mine, "rank": ranking.index(name) + 1, "players": len(ranking)}
+                   if name in ranking else {}),
+                **({"groups": scores["groups"]} if scores.get("groups") else {}),
             }
         if pub["diary"]:
             out["diary"] = {"scenario": run["scenario"], "events": diary(run["events"], name)}

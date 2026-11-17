@@ -6,6 +6,7 @@ import random
 import re
 
 from simcore.agents.actions import Action, ActionType
+from simcore.engine.orders import style_key
 
 
 class MockLLMProvider:
@@ -145,6 +146,11 @@ class MockLLMProvider:
         # A changed mind that can't communicate (a zombie…): hunt, follow people, roam.
         if "You cannot speak or communicate" in user_prompt:
             return self._mute_decision(user_prompt, nearby, location)
+
+        # The player's orders: an active plan, then the style (aggressive, sneaky, loyal…).
+        ordered = self._orders_decision(user_prompt, nearby, available_locations, location)
+        if ordered:
+            return ordered
 
         # A coveted item whoever keeps wins: grab it, take it from its carrier, or run with it.
         prize = self._prize_decision(user_prompt, nearby, available_locations, location)
@@ -371,6 +377,69 @@ class MockLLMProvider:
                     return Action(type=ActionType.MOVE, target=holder.group(2),
                                   reasoning=f"{holder.group(1)} has the {prize} there")
                 return Action(type=ActionType.FIND, target=holder.group(1), reasoning=f"Whoever has the {prize}…")
+        return None
+
+    def _orders_decision(self, prompt: str, nearby: list[str], places: list[str],
+                         location: str) -> Action | None:
+        """Follow the player's orders: go where an active plan says, then act in its style."""
+        if "Your orders from your player" not in prompt:
+            return None
+        roll = self._rng.random()
+        for plan in re.findall(r"^- ACTIVE NOW \(your plan applies\): (.+)$", prompt, re.MULTILINE):
+            where = [p for p in places if p.lower() in plan.lower() and p != location]
+            if where and roll < 0.7:
+                return Action(type=ActionType.MOVE, target=where[0], reasoning=f"My plan: {plan}")
+        style = re.search(r"^- Style: ([^\n—.]+)", prompt, re.MULTILINE)
+        key = style_key(style.group(1)) if style else ""
+        fight = re.findall(r"^- ([^:\n]+): .*You could", prompt, re.MULTILINE)
+        foes = [n for n in fight if n in nearby]
+        mine = re.search(r"Your group (.+?) holds \d+ of \d+", prompt)
+        terr = re.search(r"^Territories: (.+)$", prompt, re.MULTILINE)
+        not_ours = []
+        if terr and mine:
+            for part in terr.group(1).rstrip(".").split("; "):
+                name, _, owner = part.partition(": ")
+                if owner != mine.group(1) and name in places and name != location:
+                    not_ours.append(name)
+        if key == "aggressive":
+            if foes and roll < 0.45:
+                return Action(type=ActionType.ATTACK, target=self._rng.choice(foes),
+                              reasoning="My orders: fight")
+            if not_ours and roll < 0.7:
+                return Action(type=ActionType.MOVE, target=self._rng.choice(not_ours),
+                              reasoning="My orders: take their streets")
+        elif key == "loyal":
+            group = mine.group(1) if mine else ""
+            ours = [p for p in places if terr and f"{p}: {group}" in terr.group(1)]
+            if ours and location not in ours and roll < 0.5:
+                return Action(type=ActionType.MOVE, target=self._rng.choice(ours),
+                              reasoning="My orders: hold our ground")
+            if foes and roll < 0.3:
+                return Action(type=ActionType.ATTACK, target=foes[0],
+                              reasoning="My orders: defend us")
+            if location in ours and roll < 0.8:
+                return Action(type=ActionType.WAIT, reasoning="My orders: hold our ground")
+        elif key == "sneaky":
+            return self._special_decision(prompt, nearby, chance=0.6)
+        elif key == "businessman":
+            return self._recipe_decision(prompt, location, chance=0.7) or (
+                self._item_decision(prompt, nearby) if roll < 0.4 else None)
+        elif key == "negotiator":
+            if nearby and roll < 0.45:
+                who = self._rng.choice(foes or nearby)
+                return Action(type=ActionType.SPEAK, target=who, intent="persuade",
+                              content=f"{who}, let's make a deal: we both win.",
+                              reasoning="My orders: talk first")
+        elif key == "opportunist":
+            if mine and roll < 0.04:
+                return Action(type=ActionType.LEAVE,
+                              reasoning="My orders: this group is going nowhere")
+            if foes and roll < 0.25:
+                return Action(type=ActionType.ATTACK, target=self._rng.choice(foes),
+                              reasoning="My orders: me first")
+        if not_ours and key in ("aggressive", "opportunist", "") and roll < 0.25:
+            return Action(type=ActionType.MOVE, target=self._rng.choice(not_ours),
+                          reasoning="Their streets")
         return None
 
     def _special_decision(self, prompt: str, nearby: list[str], chance: float = 0.3) -> Action | None:

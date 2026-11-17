@@ -227,3 +227,109 @@ def test_whispers_to_others_stay_secret_in_a_diary():
     assert [e["type"] for e in lived] == ["tick_end", "agent_action"]
     assert lived[1]["data"]["content"] == "" and "reasoning" not in lived[1]["data"]
     assert list(lived[0]["data"]["agents"]) == ["a"]
+
+
+GANGS = {
+    "simulation": {"name": "Los Santos", "duration": "48 hours", "pause_each_day": True},
+    "environment": {
+        "locations": [{"name": "Puerto", "territory": True}, {"name": "Club", "territory": True}]
+    },
+    "factions": {"Motoristas": {"members": []}, "Puerto": {"members": []}},
+    "scores": {
+        "achievements": {
+            "vivo": {"points": 1, "when": {"alive_at_end": True}},
+            "barrio": {"points": 1, "repeat": True, "when": {"in_territory": True, "every": 6}},
+        }
+    },
+    "agents": [],
+}
+
+
+def test_orders_and_days_in_a_game(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIMCORE_RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setenv("SIMCORE_GAMES_DIR", str(tmp_path / "games"))
+    monkeypatch.delenv("SIMCORE_DM_PASSWORD", raising=False)
+    store = ScenarioStore(tmp_path / "user")
+    sid = store.create(GANGS)["id"]
+    app = create_app(scenario_store=store)
+    template = {
+        "editable": ["name", "faction", "orders"],
+        "factions": ["Motoristas", "Puerto"],
+        "fixed": {"starting_location": "Puerto"},
+    }
+    with TestClient(app) as dm, TestClient(app) as ana:
+        game = dm.post(
+            "/api/games",
+            json={"scenario_id": sid, "title": "Guerra", "template": template, "max_players": 100},
+        ).json()
+        assert game["max_players"] == 100
+        code = game["code"]
+        h = {
+            "X-Player-Token": ana.post(
+                f"/api/play/{code}/join", json={"display_name": "Ana"}
+            ).json()["token"]
+        }
+        assert (
+            ana.put(
+                f"/api/play/{code}/me",
+                headers=h,
+                json={"agent": {"name": "Rata", "faction": "Yakuza"}},
+            ).status_code
+            == 422
+        )
+        orders = {"style": "sigiloso", "red_lines": [{"action": "leave"}], "text": "Palos limpios."}
+        mine = {"name": "Rata", "faction": "Puerto", "orders": orders}
+        assert (
+            ana.put(
+                f"/api/play/{code}/me", headers=h, json={"agent": mine, "submitted": True}
+            ).status_code
+            == 200
+        )
+        bad = ana.put(f"/api/play/{code}/orders", headers=h, json={"orders": {"risk": "loco"}})
+        assert bad.status_code == 422
+        # Between launch and the end of the first day there's no report.
+        dm.post(f"/api/games/{game['id']}/launch", json={"demo": True, "speed": 0})
+        for _ in range(200):
+            rep = ana.get(f"/api/play/{code}/report", headers=h)
+            if rep.status_code == 200:
+                break
+            time.sleep(0.05)
+        report = rep.json()
+        assert (
+            report["day"] == 1
+            and report["agent"] == "Rata"
+            and report["orders"]["style"] == "sigiloso"
+        )
+        assert ana.get(f"/api/play/{code}").json()["status"] == "intermission"
+        assert {g["group"] for g in report["groups"]} == {"Motoristas", "Puerto"}
+        assert report["territories"]["Puerto"]["owner"] == "Puerto"  # Rata stands in it
+        assert all(e["tick"] <= 24 for e in report["diary"]["events"])
+        # New orders reach the running agent.
+        new = {"style": "agresivo", "plans": [{"when": {"day": 2}, "then": "Ve al Club"}]}
+        assert (
+            ana.put(f"/api/play/{code}/orders", headers=h, json={"orders": new}).status_code == 200
+        )
+        engine = app.state.server_state["engine"] if hasattr(app.state, "server_state") else None
+        if engine is not None:
+            assert engine._orders["Rata"].style == "agresivo"
+        assert (
+            dm.get(f"/api/games/{game['id']}").json()["players"][0]["agent"]["orders"]["style"]
+            == "agresivo"
+        )
+        dm.post("/api/control/resume")
+        for _ in range(400):
+            if ana.get(f"/api/play/{code}").json()["status"] == "finished":
+                break
+            time.sleep(0.05)
+        dm.put(f"/api/games/{game['id']}", json={"publish": {"result": True, "diary": True}})
+        res = ana.get(f"/api/play/{code}/results", headers=h).json()
+        assert (
+            res["result"]["ticks"] == 48
+            and res["result"]["rank"] == 1
+            and res["result"]["players"] == 1
+        )
+        plans = [e for e in res["diary"]["events"] if e["type"] == "orders"]
+        assert plans and plans[0]["data"]["text"] == "Ve al Club"
+        assert (
+            ana.put(f"/api/play/{code}/orders", headers=h, json={"orders": new}).status_code == 409
+        )

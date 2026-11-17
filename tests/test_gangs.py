@@ -13,20 +13,39 @@ CITY = {
     "name": "Los Santos",
     "duration": "24 hours",
     "conditions": {"noqueado": {"description": "te han dejado K.O.", "duration": 2}},
-    "items": {"dinero": {}, "bate": {"consumable": False, "weapon": {"damage": 1.0, "chance": 1.0}}},
-    "society": {"lethal": False, "knockout": {"condition": "noqueado", "place": "Hospital", "health": 0.4}},
+    "items": {
+        "dinero": {},
+        "bate": {"consumable": False, "weapon": {"damage": 1.0, "chance": 1.0}},
+    },
+    "society": {
+        "lethal": False,
+        "knockout": {"condition": "noqueado", "place": "Hospital", "health": 0.4},
+    },
     "territories": {"every": 2, "group_points": 5},
-    "environment": {"locations": [
-        {"name": "Puerto", "territory": True, "income": {"dinero": 3}},
-        {"name": "Club", "territory": True},
-        {"name": "Hospital"},
-    ]},
+    "environment": {
+        "locations": [
+            {"name": "Puerto", "territory": True, "income": {"dinero": 3}},
+            {"name": "Club", "territory": True},
+            {"name": "Hospital"},
+        ]
+    },
     "factions": {"Motoristas": {"members": ["Ana", "Bea"]}, "Puerto": {"members": ["Carlos"]}},
-    "scores": {"achievements": {
-        "conquista": {"description": "Tomar un barrio", "points": 5, "repeat": True, "when": {"captures": True}},
-        "en_casa": {"description": "Estar en tu barrio", "points": 1, "repeat": True,
-                    "when": {"in_territory": True, "every": 2}},
-    }},
+    "scores": {
+        "achievements": {
+            "conquista": {
+                "description": "Tomar un barrio",
+                "points": 5,
+                "repeat": True,
+                "when": {"captures": True},
+            },
+            "en_casa": {
+                "description": "Estar en tu barrio",
+                "points": 1,
+                "repeat": True,
+                "when": {"in_territory": True, "every": 2},
+            },
+        }
+    },
     "agents": [
         {"name": "Ana", "starting_location": "Puerto", "resources": {"bate": 1}},
         {"name": "Bea", "starting_location": "Club"},
@@ -88,8 +107,12 @@ def test_territories_pay_into_the_group_stash_and_count_for_points():
 
 
 def test_holding_territories_long_enough_ends_the_run_with_the_group_and_the_mvp():
-    rules = [{"when": {"territories": {"gte": 2, "ticks": 2}},
-              "then": {"end": "{winner} se quedan con la ciudad. La leyenda es {mvp}."}}]
+    rules = [
+        {
+            "when": {"territories": {"gte": 2, "ticks": 2}},
+            "then": {"end": "{winner} se quedan con la ciudad. La leyenda es {mvp}."},
+        }
+    ]
     e = make_engine(rules=rules)
     e._running = True
     ag(e, "Carlos").location = "Hospital"
@@ -101,7 +124,9 @@ def test_holding_territories_long_enough_ends_the_run_with_the_group_and_the_mvp
 
 
 def test_the_best_group_wins_a_timed_ending():
-    rules = [{"when": {"at": 3}, "winner": "group", "then": {"end": "Gana {winner}; leyenda: {mvp}"}}]
+    rules = [
+        {"when": {"at": 3}, "winner": "group", "then": {"end": "Gana {winner}; leyenda: {mvp}"}}
+    ]
     e = make_engine(rules=rules)
     e._running = True
     asyncio.run(e._award(ag(e, "Carlos"), "conquista", e._achievements["conquista"], 1))
@@ -143,3 +168,123 @@ def test_validation():
         msg = str(err)
     assert "pays unknown item 'oro'" in msg and "unknown place 'Cielo'" in msg
     assert "no place is a territory" in msg
+
+
+# ── Orders from each player ──────────────────────────────────────────
+
+ORDERS = {
+    "style": "sigiloso",
+    "priorities": ["ser la leyenda", "que gane mi banda"],
+    "risk": "careful",
+    "red_lines": [
+        {"action": "attack", "target": "my_group"},
+        {"action": "leave"},
+        {"action": "attack", "target": "Dani"},
+    ],
+    "plans": [
+        {"when": {"day": 2}, "then": "Ve al Club y quédate"},
+        {"when": {"knocked_out": True}, "then": "Vuelve a por quien te tumbó"},
+    ],
+    "text": "Nada de peleas a lo loco.",
+}
+
+
+def with_orders(**changes):
+    data = json.loads(json.dumps(CITY))
+    data["agents"][0]["orders"] = ORDERS
+    data.update(changes)
+    return data
+
+
+def test_the_agent_reads_its_orders_first_and_plans_when_they_apply():
+    e = SimulationEngine(SimulationConfig.model_validate(with_orders()), demo_mode=True)
+    e.events = []
+    e.event_bus.on_all(lambda x: e.events.append(x))
+    ana = ag(e, "Ana")
+    text = asyncio.run(e._orders_prompt(ana, 1))
+    assert text.startswith("Your orders from your player (follow them above everything else):")
+    assert "- Style: sigiloso — steal, spy and move unseen" in text
+    assert "- What matters most, in order: 1. ser la leyenda; 2. que gane mi banda." in text
+    assert (
+        "- Never: attack anyone in your own group." in text and "- Never: leave your group." in text
+    )
+    assert "- Plan for later: Ve al Club y quédate" in text
+    assert "- In your player's words: Nada de peleas a lo loco." in text
+    later = asyncio.run(e._orders_prompt(ana, 25))  # day 2 with 1-hour ticks
+    assert "- ACTIVE NOW (your plan applies): Ve al Club y quédate" in later
+    asyncio.run(e._orders_prompt(ana, 26))  # still active: reported once
+    plans = [x.data for x in e.events if x.type == EventType.ORDERS and x.data["kind"] == "plan"]
+    assert plans == [{"agent": "Ana", "kind": "plan", "text": "Ve al Club y quédate"}]
+
+
+def test_red_lines_are_enforced():
+    e = SimulationEngine(SimulationConfig.model_validate(with_orders()), demo_mode=True)
+    e.events = []
+    e.event_bus.on_all(lambda x: e.events.append(x))
+    ag(e, "Bea").location = "Puerto"
+
+    def turn(**kw):
+        async def decide(*_):
+            return Action(**kw)
+
+        e.llm.decide = decide
+        return asyncio.run(e._agent_turn(ag(e, "Ana"), 1))
+
+    for kw in (
+        {"type": ActionType.ATTACK, "target": "Bea"},  # her own group
+        {"type": ActionType.ATTACK, "target": "dani"},
+        {"type": ActionType.LEAVE},
+    ):
+        done = turn(**kw)
+        assert done.type == ActionType.WAIT and "red line my player set" in done.reasoning
+    assert ag(e, "Bea").state.health == 1.0 and e._faction_of("Ana") == "Motoristas"
+    blocked = [
+        x.data["text"]
+        for x in e.events
+        if x.type == EventType.ORDERS and x.data["kind"] == "red_line"
+    ]
+    assert blocked == ["attack anyone in your own group", "attack Dani", "leave your group"]
+
+
+def test_new_orders_during_the_run():
+    e = SimulationEngine(SimulationConfig.model_validate(with_orders()), demo_mode=True)
+    e.set_orders("Ana", {"style": "agresivo", "text": "A por todas"})
+    text = asyncio.run(e._orders_prompt(ag(e, "Ana"), 1))
+    assert "- Style: agresivo — fight for what you want" in text and "Never" not in text
+
+
+def test_the_demo_follows_each_style():
+    """Over a whole run, an aggressive agent fights more and a sneaky one steals more."""
+
+    def run(style):
+        data = json.loads(json.dumps(CITY))
+        data["society"] = {"lethal": False}
+        data["factions"]["Motoristas"]["rivals"] = ["Puerto"]
+        data["actions"] = {
+            "dar_un_palo": {"on_target": {"steal": "one"}, "description": "robar algo"}
+        }
+        data["agents"] = [{**a, "orders": {"style": style}} for a in data["agents"]]
+        totals = {"attack": 0, "steal": 0}
+        for seed in range(3):
+            e = SimulationEngine(
+                SimulationConfig.model_validate({**data, "seed": seed}), demo_mode=True
+            )
+            e.tick_delay = 0
+            ev = []
+            e.event_bus.on_all(lambda x: ev.append(x))
+            asyncio.run(e.run())
+            totals["attack"] += sum(
+                1
+                for x in ev
+                if x.type == EventType.AGENT_ACTION and x.data.get("action_type") == "attack"
+            )
+            totals["steal"] += sum(
+                1
+                for x in ev
+                if x.type == EventType.AGENT_ACTION and x.data.get("name") == "dar_un_palo"
+            )
+        return totals
+
+    aggressive, sneaky = run("agresivo"), run("sigiloso")
+    assert aggressive["attack"] > sneaky["attack"]
+    assert sneaky["steal"] > aggressive["steal"]

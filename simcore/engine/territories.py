@@ -18,8 +18,11 @@ if TYPE_CHECKING:
 class TerritoriesMixin:
     def _init_territories(self) -> None:
         self._territories = [loc.name for loc in self.config.environment.locations if loc.territory]
-        self._income = {loc.name: dict(loc.income) for loc in self.config.environment.locations
-                        if loc.territory and loc.income}
+        self._income = {
+            loc.name: dict(loc.income)
+            for loc in self.config.environment.locations
+            if loc.territory and loc.income
+        }
         self._owners: dict[str, str] = {}
         self._contested: dict[str, list[str]] = {}
         self._owned_since: dict[str, int] = {}
@@ -52,7 +55,9 @@ class TerritoriesMixin:
             if len(here) >= 2:
                 if sorted(here) != self._contested.get(place):
                     self._contested[place] = sorted(here)
-                    await self._territory_event(place, previous, previous, tick, contested=sorted(here))
+                    await self._territory_event(
+                        place, previous, previous, tick, contested=sorted(here)
+                    )
                 continue
             self._contested.pop(place, None)
             if len(here) == 1:
@@ -66,7 +71,9 @@ class TerritoriesMixin:
                         await self._score_capture(member, tick)
                     for agent in self.living_agents:
                         if previous and self._faction_of(agent.name) == previous:
-                            agent.observe(f"{group} took {place} from your group.", tick, importance=0.8)
+                            agent.observe(
+                                f"{group} took {place} from your group.", tick, importance=0.8
+                            )
         every = self.config.territories.every
         if tick % every == 0:
             for place, items in self._income.items():
@@ -76,7 +83,9 @@ class TerritoriesMixin:
                 stash = self._factions[group].setdefault("stash", {})
                 for item, amount in items.items():
                     stash[item] = stash.get(item, 0) + amount
-                    await self._transfer(tick, "income", item, amount, f"location:{place}", f"group:{group}", place)
+                    await self._transfer(
+                        tick, "income", item, amount, f"location:{place}", f"group:{group}", place
+                    )
         counts: dict[str, int] = {}
         for place, group in self._owners.items():
             if group in self._factions:
@@ -84,17 +93,25 @@ class TerritoriesMixin:
         self._held_history.append(counts)
         del self._held_history[:-200]
 
-    async def _territory_event(self, place: str, owner: str, previous: str, tick: int,
-                               contested: list[str] | None = None) -> None:
-        await self.event_bus.emit(SimEvent(
-            type=EventType.TERRITORY_CHANGE, tick=tick,
-            data={"place": place, "owner": owner, "previous": previous,
-                  **({"contested": contested} if contested else {})},
-        ))
+    async def _territory_event(
+        self, place: str, owner: str, previous: str, tick: int, contested: list[str] | None = None
+    ) -> None:
+        await self.event_bus.emit(
+            SimEvent(
+                type=EventType.TERRITORY_CHANGE,
+                tick=tick,
+                data={
+                    "place": place,
+                    "owner": owner,
+                    "previous": previous,
+                    **({"contested": contested} if contested else {}),
+                },
+            )
+        )
 
     def _territory_winners(self, spec) -> list[str]:
         """Groups that held at least `gte` territories in each of the last `ticks` ticks."""
-        recent = self._held_history[-spec.ticks:]
+        recent = self._held_history[-spec.ticks :]
         if len(recent) < spec.ticks:
             return []
         groups = [spec.faction] if spec.faction else sorted({g for c in recent for g in c})
@@ -114,19 +131,27 @@ class TerritoriesMixin:
         text = "Territories: " + "; ".join(parts) + "."
         if mine:
             held = self._held_by(mine)
-            text += (f" Your group {mine} holds {len(held)} of {len(self._territories)}."
-                     " A place is taken by being there with your group and no rivals;"
-                     " it pays into your group's stash")
+            text += (
+                f" Your group {mine} holds {len(held)} of {len(self._territories)}."
+                " A place is taken by being there with your group and no rivals;"
+                " it pays into your group's stash"
+            )
             pays = {p: i for p, i in self._income.items()}
             if pays:
-                text += ": " + "; ".join(f"{p} {', '.join(f'{k} x{fmt_amount(v)}' for k, v in i.items())}"
-                                          for p, i in pays.items())
+                text += ": " + "; ".join(
+                    f"{p} {', '.join(f'{k} x{fmt_amount(v)}' for k, v in i.items())}"
+                    for p, i in pays.items()
+                )
             text += f" every {self.config.territories.every} ticks."
         return text
 
     def territories_state(self) -> dict:
         if not self._territories:
             return {}
-        return {p: {"owner": self._owners.get(p, ""), **({"contested": self._contested[p]}
-                                                         if p in self._contested else {})}
-                for p in self._territories}
+        return {
+            p: {
+                "owner": self._owners.get(p, ""),
+                **({"contested": self._contested[p]} if p in self._contested else {}),
+            }
+            for p in self._territories
+        }

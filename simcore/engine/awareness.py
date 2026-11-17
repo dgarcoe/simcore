@@ -12,6 +12,9 @@ from simcore.engine.events import EventType, SimEvent
 if TYPE_CHECKING:
     from simcore.agents.agent import Agent
 
+BIG_CAST = 15  # more living agents than this: prompts list only those who matter
+HERE_LIMIT = 10
+OTHERS_LIMIT = 8
 LEFT_TICKS = 3  # "Carla went to the Farm" is shown this long
 INVITE_TICKS = 3  # an invitation (and the wait for it) lasts this long
 FOLLOW_PASSES = 3  # chains of followers resolved per tick
@@ -76,12 +79,26 @@ class AwarenessMixin:
             return (other.location, self.clock.current_tick, "seen")
         return self._last_seen.get(agent.id, {}).get(other.name)
 
+    def _big_cast(self) -> bool:
+        """Many people: the prompt lists only those who matter to each agent."""
+        return len(self.living_agents) > BIG_CAST
+
+    def _matters(self, agent: Agent, other: Agent) -> bool:
+        """Someone the agent has a relationship with, or a member of its group."""
+        group = self._faction_of(agent.name) if hasattr(self, "_faction_of") else ""
+        same = bool(group and self._faction_of(other.name) == group)
+        return other.name in agent.memory.relationships or same
+
     def _awareness_prompt(self, agent: Agent, tick: int, speech: bool = True) -> str:
         lines = []
         here = [a for a in self.living_agents if a.location == agent.location and a.id != agent.id]
+        big = self._big_cast()
+        shown = here
+        if big:
+            shown = sorted(here, key=lambda o: not self._matters(agent, o))[:HERE_LIMIT]
         if here:
             lines.append("What the people here are doing:")
-            for o in here:
+            for o in shown:
                 bits = []
                 came = self._arrived.get(o.id)
                 if came and tick - came[0] <= 1 and came[1] and came[1] != o.location:
@@ -98,10 +115,12 @@ class AwarenessMixin:
                 elif o.state.health < 0.6:
                     bits.append("hurt")
                 lines.append(f"- {o.name}: {'; '.join(bits) or 'nothing in particular'}")
+            if len(here) > len(shown):
+                lines.append(f"- and {len(here) - len(shown)} more people")
 
         left, elsewhere = [], []
         for o in self.living_agents:
-            if o.id == agent.id or o in here:
+            if o.id == agent.id or o in here or (big and not self._matters(agent, o)):
                 continue
             seen = self._where_is(agent, o)
             if seen is None:
@@ -114,8 +133,9 @@ class AwarenessMixin:
             else:
                 elsewhere.append(f"{o.name} at {place} ({_ago(tick, when)})")
         if left:
-            lines.append("Who left: " + "; ".join(left) + ".")
+            lines.append("Who left: " + "; ".join(left[:OTHERS_LIMIT]) + ".")
         if elsewhere:
+            elsewhere = elsewhere[:OTHERS_LIMIT]
             label = "Where the others are" if self.config.awareness == "full" else "Last seen"
             lines.append(f"{label}: " + "; ".join(elsewhere) + ".")
 

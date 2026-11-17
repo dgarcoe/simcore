@@ -267,7 +267,8 @@ class WorldMixin:
                 then = fill_holder(then, winner or "nadie", WINNER)
                 if "end" in then:
                     self.end_winner = winner
-            if MVP in str(description) or MVP in str(then) or ("end" in then and self._achievements):
+            ends = "end" in then and self._achievements
+            if MVP in str(description) or MVP in str(then) or ends:
                 mvp = " & ".join(self._top_scorers(alive_only=False))
                 description = fill_holder(description, mvp or "nadie", MVP)
                 then = fill_holder(then, mvp or "nadie", MVP)
