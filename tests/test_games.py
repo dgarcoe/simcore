@@ -317,10 +317,12 @@ def test_orders_and_days_in_a_game(tmp_path, monkeypatch):
             == "agresivo"
         )
         dm.post("/api/control/resume")
+        # Nobody looks at the game until the run is over: it still ends up finished.
         for _ in range(400):
-            if ana.get(f"/api/play/{code}").json()["status"] == "finished":
+            if dm.get("/api/runs").json()["runs"][0]["status"] == "finished":
                 break
             time.sleep(0.05)
+        assert ana.get(f"/api/play/{code}").json()["status"] == "finished"
         dm.put(f"/api/games/{game['id']}", json={"publish": {"result": True, "diary": True}})
         res = ana.get(f"/api/play/{code}/results", headers=h).json()
         assert (

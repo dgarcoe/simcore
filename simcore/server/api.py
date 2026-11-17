@@ -481,7 +481,7 @@ def create_app(engine: SimulationEngine | None = None,
                 game["status"] = phase
                 _games().save(game)
             return False
-        if game["status"] == "running":
+        if game["status"] in ("running", "intermission"):
             game["status"] = "finished"
             _games().save(game)
         return True
