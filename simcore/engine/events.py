@@ -47,6 +47,7 @@ class EventType(Enum):
     VOTE_RESULT = "vote_result"
     DICE_ROLL = "dice_roll"
     LEVEL_UP = "level_up"
+    SCORE_CHANGE = "score_change"
 
 
 @dataclass

@@ -9,7 +9,7 @@ import re
 import unicodedata
 from typing import TYPE_CHECKING
 
-from simcore.agents.actions import Action, ActionType
+from simcore.agents.actions import Action, ActionType, fmt_amount
 from simcore.engine.effects import parse_effects
 from simcore.engine.events import EventType, SimEvent
 
@@ -156,6 +156,26 @@ class SocietyMixin:
 
     def _faction_of(self, name: str) -> str:
         return next((f for f, d in self._factions.items() if name in d["members"]), "")
+
+    def _allies_here(self, agent: Agent) -> list[Agent]:
+        """Members of the agent's group who are here (when belonging pays: `group_perks`)."""
+        faction = self._faction_of(agent.name)
+        if not faction or not self.config.society.group_perks:
+            return []
+        return [o for o in self._witnesses(agent) if self._faction_of(o.name) == faction]
+
+    def _ally_bonus(self, agent: Agent) -> int:
+        """+1 per group member here (up to +2) to rolls and defense."""
+        return min(2, len(self._allies_here(agent)))
+
+    def _stash(self, agent: Agent, target: str) -> dict | None:
+        """The agent's group's common stash when `target` names that group, else None."""
+        faction = self._faction_of(agent.name)
+        if not faction or not self.config.society.group_perks:
+            return None
+        if _plain(target or "") != _plain(faction):
+            return None
+        return self._factions[faction].setdefault("stash", {})
 
     async def _faction_event(
         self, faction: str, change: str, tick: int, agent: str = "", other: str = ""
@@ -304,6 +324,20 @@ class SocietyMixin:
         action.target = other.name
         return action
 
+    async def _stand_by(self, attacker: Agent, victim: Agent, tick: int) -> None:
+        """One of us was attacked: the members of the victim's group here turn on the attacker."""
+        theirs = self._faction_of(victim.name)
+        if not theirs or not self.config.society.group_perks:
+            return
+        if theirs == self._faction_of(attacker.name):
+            return
+        for o in self._witnesses(attacker):
+            if o is not victim and self._faction_of(o.name) == theirs:
+                o.memory.update_relationship(attacker.name, -0.4, tick,
+                                             f"attacked {victim.name}, one of us")
+                o.observe(f"{attacker.name} attacked {victim.name}, one of your group: "
+                          "stand by them.", tick, importance=0.9)
+
     async def _mark_rivals(self, a: str, b: str, tick: int) -> None:
         fa, fb = self._faction_of(a), self._faction_of(b)
         if fa and fb and fa != fb and fb not in self._factions[fa]["rivals"]:
@@ -369,6 +403,7 @@ class SocietyMixin:
             self._feel(victim, "angry", agent.name, tick)
         self._feel(agent, "angry", victim.name, tick)
         self._aggressors[agent.name] = tick
+        await self._stand_by(agent, victim, tick)
         witnesses = [o for o in self._witnesses(agent) if o is not victim]
         for o in witnesses:
             o.observe(f"{agent.name} attacked {victim.name}{with_what}.", tick, importance=0.8)
@@ -742,6 +777,8 @@ class SocietyMixin:
             )
             if rel and rel.sentiment <= DISTRUST:
                 lines.append(f'You no longer trust {f["leader"]}: you could "leave" the group.')
+            if self.config.society.group_perks:
+                lines.append(self._perks_line(agent, faction))
         others_groups = [
             f"{n} (leader {d['leader']})" for n, d in self._factions.items() if n != faction
         ]
@@ -766,11 +803,17 @@ class SocietyMixin:
                 and (r2 := o.memory.relationships.get(agent.name))
                 and r2.sentiment >= FRIENDS
             ]
-            if len(friends) >= 2 and not faction:
+            if len(friends) >= 2:
+                leave = f" (you would leave {faction})" if faction else ""
                 lines.append(
-                    f"{' and '.join(friends[:3])} think like you: you could form a group together "
-                    f'("found_group", content: its name, goal: what it is for, target: who you invite).'
+                    f"{' and '.join(friends[:3])} think like you: you could form a group together"
+                    f'{leave} ("found_group", content: its name, goal: what it is for, '
+                    "target: who you invite)."
                 )
+            if not faction:
+                for g in self._liked_groups(agent)[:2]:
+                    lines.append(f'People you like belong to {g}, and some are here: you could '
+                                 f'"join" it (target "{g}").')
 
         for vote in self._votes:
             if vote["place"] == agent.location and agent.name not in vote["ballots"]:
@@ -879,8 +922,30 @@ class SocietyMixin:
         return "\n".join([head, *lines[:3]])
 
     def _prize_wins(self, item: str) -> bool:
-        return any(r.when.holds and r.when.holds.item == item and "end" in r.then
-                   for r in self.config.rules)
+        return any(w.holds and w.holds.item == item and "end" in r.then
+                   for r in self.config.rules for w in r.when.all_tests())
+
+    def _perks_line(self, agent: Agent, faction: str) -> str:
+        allies = self._allies_here(agent)
+        text = ("Being in a group pays: members here add +1 each (up to +2) to your rolls and "
+                "defense, and stand by you if you are attacked.")
+        if allies:
+            text += f" Here with you: {', '.join(a.name for a in allies)}."
+        stash = self._factions[faction].get("stash") or {}
+        held = ", ".join(f"{k} x{fmt_amount(v)}" for k, v in stash.items() if v > 0)
+        return text + (f' Common stash of {faction}: {held or "empty"} ("give" with target '
+                       f'"{faction}" to add, "take" with target "{faction}" to use it, '
+                       "from anywhere).")
+
+    def _liked_groups(self, agent: Agent) -> list[str]:
+        """Groups with a member here the agent likes."""
+        liked = set()
+        for o in self._witnesses(agent):
+            group = self._faction_of(o.name)
+            rel = agent.memory.relationships.get(o.name)
+            if group and rel and rel.sentiment >= FRIENDS:
+                liked.add(group)
+        return sorted(liked)
 
     def _looks(self, other: Agent, tick: int) -> str:
         emotion, _ = self._emotion(other, tick)
@@ -913,6 +978,7 @@ class SocietyMixin:
                     "members": list(f["members"]),
                     "rivals": sorted(f["rivals"]),
                     "color": f["color"],
+                    **({"stash": dict(f["stash"])} if f.get("stash") else {}),
                 }
                 for n, f in self._factions.items()
             },

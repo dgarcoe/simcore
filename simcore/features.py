@@ -21,6 +21,8 @@ FEATURES = [
     "games",  # games with players who configure their own agent (/api/games, /api/play)
     "auth",  # SIMCORE_DM_PASSWORD: only dungeon masters see the simulation
     "recipes",  # actions.where, pending actions with what they need and where it lies
+    "game_systems",  # steal one/all, "*" items, scores & achievements, when.any/score, {winner},
+    # cursed items, group perks (allies' bonus, common stash, mutual defense)
 ]
 
 

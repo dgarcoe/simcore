@@ -22,16 +22,18 @@ if TYPE_CHECKING:
     from simcore.config.schema import RuleConfig
 
 HOLDER = "{holder}"
+WINNER = "{winner}"
 
 
-def fill_holder(value: Any, holder: str) -> Any:
-    """Replace {holder} in every text of an effects mapping (keys included)."""
+def fill_holder(value: Any, holder: str, mark: str = HOLDER) -> Any:
+    """Replace {holder} (or another mark, e.g. {winner}) in every text of an effects mapping."""
     if isinstance(value, str):
-        return value.replace(HOLDER, holder)
+        return value.replace(mark, holder)
     if isinstance(value, list):
-        return [fill_holder(v, holder) for v in value]
+        return [fill_holder(v, holder, mark) for v in value]
     if isinstance(value, dict):
-        return {fill_holder(k, holder): fill_holder(v, holder) for k, v in value.items()}
+        return {fill_holder(k, holder, mark): fill_holder(v, holder, mark)
+                for k, v in value.items()}
     return value
 
 
@@ -40,7 +42,7 @@ class ArtifactsMixin:
         # item → (carrier name, tick since it has carried it without interruption)
         self._holders: dict[str, tuple[str, int]] = {}
         self._tracked_items = sorted(
-            {r.when.holds.item for r in self.config.rules if r.when.holds}
+            {w.holds.item for r in self.config.rules for w in r.when.all_tests() if w.holds}
             | {name for name, item in self.config.items.items() if item.visible}
         )
 
@@ -66,8 +68,15 @@ class ArtifactsMixin:
         return found[0], tick - found[1]
 
     def _hold_match(self, rule: RuleConfig, tick: int) -> str | None:
-        """The holder's name when the rule's `holds` test passes, else None."""
-        spec = rule.when.holds
+        """The holder's name when a `holds` test of the rule (or an alternative) passes."""
+        for w in rule.when.all_tests():
+            if w.holds is not None:
+                found = self._hold_spec_match(w.holds, tick)
+                if found:
+                    return found
+        return None
+
+    def _hold_spec_match(self, spec, tick: int) -> str | None:
         held = self._held_for(spec.item, tick)
         if not held or held[1] < spec.ticks:
             return None
@@ -111,29 +120,33 @@ class ArtifactsMixin:
             cfg = self.config.items.get(item)
             if agent.state.resources.get(item, 0) >= 1 and cfg and cfg.visible:
                 lines.append(f"You carry the {item}: everyone who sees you knows it.")
-        hourly = self.clock.tick_duration_minutes == 60
         for rule in self.config.rules:
-            spec = rule.when.holds
-            if not spec or "end" not in rule.then:  # only the races someone wins
+            if "end" not in rule.then:  # only the races someone wins
                 continue
-            where = f" in {spec.location}" if spec.location else ""
-            span = f"{spec.ticks} hours" if hourly else f"{spec.ticks} turns"
-            line = f"Whoever keeps the {spec.item}{where} for {span} in a row wins"
-            held = self._held_for(spec.item, tick)
-            if held is None:
-                line += "; nobody carries it now"
-                lying = [p.name for p in self.environment.locations.values()
-                         if p.stock.get(spec.item, 0) >= 1]
-                if lying:
-                    line += f", it lies in {lying[0]}"
-            elif held[0] == agent.name:
-                line += f"; you have kept it for {held[1]} of {spec.ticks}"
-            elif self._knows_holder(agent, spec.item):
-                carrier = self._find_agent_by_name(held[0])
-                at = f" (at {carrier.location})" if carrier else ""
-                line += f"; {held[0]}{at} has kept it for {held[1]}"
-            lines.append(line + ".")
+            for w in rule.when.all_tests():
+                if w.holds:
+                    lines.append(self._race_line(agent, w.holds, tick))
         return "\n".join(dict.fromkeys(lines))
+
+    def _race_line(self, agent: Agent, spec, tick: int) -> str:
+        hourly = self.clock.tick_duration_minutes == 60
+        where = f" in {spec.location}" if spec.location else ""
+        span = f"{spec.ticks} hours" if hourly else f"{spec.ticks} turns"
+        line = f"Whoever keeps the {spec.item}{where} for {span} in a row wins"
+        held = self._held_for(spec.item, tick)
+        if held is None:
+            line += "; nobody carries it now"
+            lying = [p.name for p in self.environment.locations.values()
+                     if p.stock.get(spec.item, 0) >= 1]
+            if lying:
+                line += f", it lies in {lying[0]}"
+        elif held[0] == agent.name:
+            line += f"; you have kept it for {held[1]} of {spec.ticks}"
+        elif self._knows_holder(agent, spec.item):
+            carrier = self._find_agent_by_name(held[0])
+            at = f" (at {carrier.location})" if carrier else ""
+            line += f"; {held[0]}{at} has kept it for {held[1]}"
+        return line + "."
 
     def _knows_holder(self, agent: Agent, item: str) -> bool:
         cfg = self.config.items.get(item)

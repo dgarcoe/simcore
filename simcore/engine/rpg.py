@@ -203,7 +203,8 @@ class RpgMixin:
         if skill:
             sheet["skill_uses"][skill] += 1
         natural = self._rng.randint(1, 20)
-        mod = self._bonus(agent, attribute, skill) + extra
+        allies = self._ally_bonus(agent)
+        mod = self._bonus(agent, attribute, skill) + extra + allies
         total = natural + mod
         result = {
             "agent": agent.name,
@@ -216,6 +217,7 @@ class RpgMixin:
             "target": target,
             "critical": natural == 20,
             "fumble": natural == 1,
+            **({"allies": allies} if allies else {}),
         }
         if against is not None:
             other, o_attr, o_skill = against
@@ -260,14 +262,16 @@ class RpgMixin:
             ),
             default=0,
         )
-        return 10 + modifier(self._sheet(agent)["attributes"]["dexterity"]) + armor
+        dexterity = modifier(self._sheet(agent)["attributes"]["dexterity"])
+        return 10 + dexterity + armor + self._ally_bonus(agent)
 
     async def _attack_roll(
         self, agent: Agent, victim: Agent, item: str, chance: float, tick: int
     ) -> tuple[bool, bool, bool]:
         """(hit, critical, fumble); without rpg the weapon's chance decides."""
         if not self.rpg:
-            return self._rng.random() < chance, False, False
+            edge = 0.05 * (self._ally_bonus(agent) - self._ally_bonus(victim))
+            return self._rng.random() < chance + edge, False, False
         spec = self.config.items.get(item) if item else None
         ranged = bool(spec and spec.weapon and spec.weapon.ranged)
         attribute = "dexterity" if ranged else "strength"
@@ -307,7 +311,7 @@ class RpgMixin:
         """A scenario action's check (rpg + check) or its plain chance."""
         check = getattr(act, "check", None)
         if not self.rpg or check is None:
-            return self._rng.random() < act.chance
+            return self._rng.random() < act.chance + 0.05 * self._ally_bonus(agent)
         against = None
         if check.against and target is not None:
             against = (target, check.against, check.against_skill)

@@ -106,6 +106,18 @@ class WeaponConfig(BaseModel):
     ranged: bool = False  # rpg: aimed with dexterity instead of strength
 
 
+class CurseConfig(BaseModel):
+    """A cursed item: whoever carries it gets a condition (pain, a changed mind…) until it is
+    gone, maybe can't get rid of it, and only certain items or actions break the curse."""
+
+    model_config = {"extra": "forbid"}
+
+    condition: str  # given while carrying it (and taken away when it is gone)
+    sticky: bool = False  # can't be given, dropped or traded away (it can still be stolen)
+    broken_by: list[str] = Field(default_factory=list)  # items used on the carrier, or actions
+    description: str = ""  # what the carrier learns when the curse takes hold
+
+
 class ItemConfig(BaseModel):
     """An object agents can carry, give, trade and use."""
 
@@ -124,6 +136,8 @@ class ItemConfig(BaseModel):
     visible: bool = False
     # Falls to the ground (the place's stock) when its carrier dies or leaves.
     drops: bool = False
+    # Cursed: a condition while carried, maybe impossible to let go (see CurseConfig).
+    curse: CurseConfig | None = None
 
     @field_validator("on_use")
     @classmethod
@@ -152,13 +166,16 @@ class Outcome(BaseModel):
     mood: float = Field(0.0, ge=-1.0, le=1.0)
     add_conditions: list[str] = Field(default_factory=list)
     remove_conditions: list[str] = Field(default_factory=list)
-    items: dict[str, float] = Field(default_factory=dict)  # + receives, - loses
+    items: dict[str, float] = Field(default_factory=dict)  # + receives, - loses; "*": any item
     kill: bool = False
+    # on_target of an action: what the actor takes from the target, one item at random or all.
+    steal: Literal["", "one", "all"] = ""
+    steal_except: list[str] = Field(default_factory=list)  # never taken this way
 
     @property
     def empty(self) -> bool:
         return not (self.health or self.energy or self.mood or self.add_conditions
-                    or self.remove_conditions or self.items or self.kill)
+                    or self.remove_conditions or self.items or self.kill or self.steal)
 
 
 class CheckConfig(BaseModel):
@@ -262,6 +279,9 @@ class VoteConfig(BaseModel):
 
 class SocietyConfig(BaseModel):
     spontaneous_groups: bool = True  # agents may found groups of their own
+    # Belonging pays: members here add to each other's rolls and defense, share a common stash,
+    # and turn against whoever attacks one of them.
+    group_perks: bool = True
     # Professions that can heal without an item (substring match).
     healers: list[str] = Field(default_factory=lambda: ["médic", "medic", "enfermer", "nurse", "sanitari",
                                                          "veterinari", "doctor", "paramedic"])
@@ -400,6 +420,46 @@ class RuleWhen(BaseModel):
     count: CountSpec | None = None
     place: dict[str, PlaceSpec] = Field(default_factory=dict)
     holds: HoldSpec | None = None
+    # Some living agent's points pass the test ({winner} is the best of them).
+    score: Compare | None = None
+    # Any one of these sets of tests (each like `when`) is enough, on top of the tests above.
+    any: list["RuleWhen"] = Field(default_factory=list)
+
+    def all_tests(self) -> list["RuleWhen"]:
+        """This set of tests and every alternative inside it."""
+        return [self, *(t for w in self.any for t in w.all_tests())]
+
+
+class AchievementWhen(BaseModel):
+    """What earns (or loses) an achievement's points."""
+
+    model_config = {"extra": "forbid"}
+
+    action: str = ""  # doing this action (a built-in one or the scenario's, when it succeeds)
+    times: int = Field(1, ge=1)  # ...this many times
+    visited: Literal["all"] | list[str] | None = None  # having been at every place / these places
+    carries: str = ""  # carrying this item
+    condition: str = ""  # having this condition
+    alive_at_end: bool = False  # still alive when the run ends
+    without: str = ""  # penalty: going `every` ticks without doing this action
+    every: int = Field(24, ge=1)
+
+
+class Achievement(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    description: str = ""
+    points: int = 1  # negative for penalties
+    when: AchievementWhen = Field(default_factory=AchievementWhen)
+    # Earned again each time (each `times` actions, or each `every` ticks carrying / having it).
+    repeat: bool = False
+
+
+class ScoresConfig(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    visible: bool = True  # agents see the points, the ranking and what earns them
+    achievements: dict[str, Achievement] = Field(default_factory=dict)
 
 
 class RuleConfig(BaseModel):
@@ -530,6 +590,8 @@ class SimulationConfig(BaseModel):
     # Daily routines by agent name, profession (substring) or "*":
     # {"médica": {"day": {"work": ["Hospital"]}, "night": {"rest": ["Pensión"]}}}
     routines: dict[str, dict[str, dict[str, list[str]]]] = Field(default_factory=dict)
+    # Points and achievements (see ScoresConfig).
+    scores: ScoresConfig = Field(default_factory=ScoresConfig)
 
     @model_validator(mode="after")
     def _check_references(self) -> "SimulationConfig":
@@ -551,6 +613,11 @@ class SimulationConfig(BaseModel):
             need(a.conditions, f"agent {a.name}")
         for name, item in self.items.items():
             need(item.cures, f"item {name}")
+            if item.curse:
+                need([item.curse.condition], f"item {name}")
+                problems.extend(f"item {name}'s curse is broken by unknown item or action '{b}'"
+                                for b in item.curse.broken_by
+                                if b not in self.items and b not in acts)
         for name, cond in self.conditions.items():
             t = cond.rules.targets
             need(t.conditions + t.any_conditions + t.not_conditions, f"condition {name}")
@@ -588,18 +655,37 @@ class SimulationConfig(BaseModel):
         for i, rule in enumerate(self.rules):
             where = f"rule {i + 1}"
             check_effects(rule.then, where)
-            if rule.when.count:
-                need([c for c in (rule.when.count.condition, rule.when.count.not_condition) if c], where)
-                if rule.when.count.location and rule.when.count.location not in places:
-                    problems.append(f"{where} counts in unknown place '{rule.when.count.location}'")
-            problems.extend(f"{where} checks unknown place '{p}'" for p in rule.when.place if p not in places)
-            held = rule.when.holds
-            if held and held.item not in self.items:
-                problems.append(f"{where} holds unknown item '{held.item}' (add it to items)")
-            if held and held.location and held.location not in places:
-                problems.append(f"{where} holds the item in unknown place '{held.location}'")
-            if rule.when.count and rule.when.count.item and rule.when.count.item not in self.items:
-                problems.append(f"{where} counts unknown item '{rule.when.count.item}' (add it to items)")
+            for w in rule.when.all_tests():
+                if w.count:
+                    need([c for c in (w.count.condition, w.count.not_condition) if c], where)
+                    if w.count.location and w.count.location not in places:
+                        problems.append(f"{where} counts in unknown place '{w.count.location}'")
+                problems.extend(f"{where} checks unknown place '{p}'"
+                                for p in w.place if p not in places)
+                held = w.holds
+                if held and held.item not in self.items:
+                    problems.append(f"{where} holds unknown item '{held.item}' (add it to items)")
+                if held and held.location and held.location not in places:
+                    problems.append(f"{where} holds the item in unknown place '{held.location}'")
+                if w.count and w.count.item and w.count.item not in self.items:
+                    problems.append(f"{where} counts unknown item '{w.count.item}' "
+                                    "(add it to items)")
+            if any(w.score for w in rule.when.all_tests()) and not self.scores.achievements:
+                problems.append(f"{where} tests points but there are no scores.achievements")
+        for name, ach in self.scores.achievements.items():
+            where, w = f"achievement {name}", ach.when
+            if w.action and w.action not in builtin and w.action not in acts:
+                problems.append(f"{where} uses unknown action '{w.action}'")
+            if w.without and w.without not in builtin and w.without not in acts:
+                problems.append(f"{where} uses unknown action '{w.without}'")
+            if isinstance(w.visited, list):
+                problems.extend(f"{where} visits unknown place '{p}'"
+                                for p in w.visited if p not in places)
+            if w.carries and w.carries not in self.items:
+                problems.append(f"{where} carries unknown item '{w.carries}' (add it to items)")
+            need([w.condition] if w.condition else [], where)
+            if not any((w.action, w.visited, w.carries, w.condition, w.alive_at_end, w.without)):
+                problems.append(f"{where} has no test in when")
         names = {a.name for a in self.agents}
         for fname, f in self.factions.items():
             problems.extend(f"faction {fname} has unknown member '{m}'" for m in f.members if m not in names)

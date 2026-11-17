@@ -20,8 +20,10 @@ from simcore.engine.artifacts import ArtifactsMixin
 from simcore.engine.awareness import AwarenessMixin
 from simcore.engine.conditions import ConditionsMixin
 from simcore.engine.conversations import ConversationsMixin
+from simcore.engine.curses import CursesMixin
 from simcore.engine.minds import MindsMixin
 from simcore.engine.rpg import RpgMixin
+from simcore.engine.scores import ScoresMixin
 from simcore.engine.search import SearchMixin
 from simcore.engine.society import SocietyMixin
 from simcore.engine.story import StoryMixin
@@ -62,6 +64,9 @@ def _add(inv: dict[str, float], item: str, amount: float) -> None:
         inv.pop(item, None)
 
 
+CURSED = "the {item} won't leave my hands (it is cursed)"
+
+
 def _has(inv: dict[str, float], item: str, amount: float) -> bool:
     return bool(item) and inv.get(item, 0) + 1e-9 >= amount
 
@@ -97,7 +102,8 @@ SOCIETY_ACTIONS = {
 
 
 class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin,
-                       SearchMixin, StoryMixin, SocietyMixin, RpgMixin, ArtifactsMixin):
+                       SearchMixin, StoryMixin, SocietyMixin, RpgMixin, ArtifactsMixin, ScoresMixin,
+                       CursesMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -111,6 +117,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._arrivals: dict[int, list[AgentConfig]] = {}
         self.end_reason = ""
         self.end_message = ""
+        self.end_winner = ""
         self._fired_rules: set[int] = set()
         self._init_conversations()
         self._init_awareness()
@@ -119,6 +126,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_society()
         self._init_rpg()
         self._init_artifacts()
+        self._init_scores()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -263,6 +271,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
 
         self.end_reason = ""
         self.end_message = ""
+        self.end_winner = ""
         while self._running and self.clock.advance():
             if self._paused:
                 await asyncio.sleep(0.1)
@@ -296,11 +305,15 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         if not self.end_reason:
             self.end_reason = "stopped" if not self._running else "completed"
         self._running = False
+        await self._scores_at_end(self.clock.current_tick)
         await self._story_at_end(self.clock.current_tick)
         await self.event_bus.emit(SimEvent(
             type=EventType.SIMULATION_END,
             tick=self.clock.current_tick,
-            data={"llm_stats": self.llm.stats, "reason": self.end_reason, "message": self.end_message},
+            data={"llm_stats": self.llm.stats, "reason": self.end_reason,
+                  "message": self.end_message,
+                  **({"winner": self.end_winner} if self.end_winner else {}),
+                  **({"scores": self.scores_state()} if self.config.scores.achievements else {})},
         ))
         logger.info(f"Simulation complete. LLM stats: {self.llm.stats}")
 
@@ -324,6 +337,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         if self.config.needs:
             await self._needs_tick(tick)
         await self._hazards_tick(tick)
+        await self._curses_tick(tick)
+        await self._scores_tick(tick)
         if self.config.rules:
             await self._rules_tick(tick)
             if not self._running:  # a rule ended the run
@@ -464,6 +479,11 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             self._note_move(agent, origin, agent.location, tick)
         self._note_doing(agent, action, tick)
         await self._after_action_society(agent, action, tick)
+        await self._scores_after_action(agent, action, tick)
+        if action.type in ITEM_ACTIONS or action.type == ActionType.CUSTOM:
+            other = self._find_agent_by_name(action.target) if action.target else None
+            for someone in {agent, other} - {None}:
+                await self._sync_curses(someone, tick)
         await self._check_ignored(agent, action, tick)
         if action.type == ActionType.WORK:
             await self._produce(agent, tick)
@@ -599,6 +619,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                       "" if mute else self._society_prompt(agent, tick),
                       "" if found else self._rpg_prompt(agent),
                       self._artifacts_prompt(agent, tick),
+                      self._scores_prompt(agent),
+                      self._curses_prompt(agent),
                       "" if mute else self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
@@ -850,6 +872,30 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         agent.observe(f"I tried to {action.describe()} but couldn't: {why}.", tick, importance=0.5)
         return Action(type=ActionType.WAIT, reasoning=f"Couldn't {action.describe()}: {why}. {action.reasoning}".strip())
 
+    async def _stash_action(self, agent: Agent, action: Action, stash: dict, tick: int) -> Action:
+        """Give to or take from the agent's group's common stash."""
+        faction = self._faction_of(agent.name)
+        inv = agent.state.resources
+        give = action.type == ActionType.GIVE
+        source = inv if give else stash
+        action.item = self._resolve_item(action.item, source, (action.content, action.reasoning))
+        item = action.item
+        if not item or source.get(item, 0) <= 0:
+            what = item or "such item"
+            why = "I don't have it" if give else f"the stash of {faction} has no {what}"
+            return await self._refuse(agent, action, tick, why)
+        if give and self._curse_holds(agent, item):
+            return await self._refuse(agent, action, tick, CURSED.format(item=item))
+        amount = min(action.amount, source[item])
+        _add(source, item, -amount)
+        _add(stash if give else inv, item, amount)
+        group = f"group:{faction}"
+        await self._transfer(tick, "give" if give else "take", item, amount,
+                             agent.name if give else group, group if give else agent.name,
+                             agent.location)
+        action.amount, action.target = amount, faction
+        return action
+
     def _resolve_item(self, name: str, pool: dict[str, float], texts: tuple[str, ...]) -> str:
         """The item an LLM means: 'Tablón' → tablones; with none, one named in its target or text.
 
@@ -884,6 +930,10 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         inv = agent.state.resources
         place = self.environment.get_location(agent.location)
         kind = action.type
+        if kind in (ActionType.GIVE, ActionType.TAKE):
+            stash = self._stash(agent, action.target)
+            if stash is not None:
+                return await self._stash_action(agent, action, stash, tick)
         stock = place.stock if place else {}
         texts = (action.target, action.content, action.reasoning)
         if kind in (ActionType.GIVE, ActionType.DROP, ActionType.USE, ActionType.TRADE,
@@ -896,6 +946,9 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
 
         if kind in (ActionType.GIVE, ActionType.DROP, ActionType.TRADE) and not _has(inv, item, amount):
             return await self._refuse(agent, action, tick, f"I don't have {fmt_amount(amount)} {item or 'of that'}")
+        letting_go = kind in (ActionType.GIVE, ActionType.DROP, ActionType.TRADE)
+        if letting_go and self._curse_holds(agent, item):
+            return await self._refuse(agent, action, tick, CURSED.format(item=item))
 
         if kind == ActionType.GIVE:
             other = self._present(agent, action.target)
@@ -939,7 +992,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             spec = self.config.items.get(item)
             if not _has(inv, item, 1):
                 return await self._refuse(agent, action, tick, f"I don't have any {item or 'item'}")
-            if not spec or not (spec.on_use or spec.cures):
+            if not spec or not (spec.on_use or spec.cures or item in self._breakers()):
                 return await self._refuse(agent, action, tick, f"{item} has no use")
             on = agent
             if action.target and action.target.strip().lower() not in (agent.name.lower(), "self", "me", "myself"):
@@ -954,6 +1007,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             for name in spec.cures:
                 await self.remove_condition(on, name, tick, f"{item} from {agent.name}")
             await self._satisfy_by_item(on, item, tick)
+            await self._break_curses(on, item, tick)
             if on is not agent:
                 on.observe(f"{agent.name} used {item} on me.", tick, importance=0.7)
                 on.memory.update_relationship(agent.name, 0.1, tick, f"used {item} on me")
@@ -1053,9 +1107,11 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                     _add(place.stock, item, delta)
                     await self._transfer(tick, "effect", item, abs(delta), "" if delta > 0 else spec,
                                          spec if delta > 0 else "", place.name)
+                    if delta > 0:
+                        self._announce_item(item, delta, place.name, tick)
             return
         for agent in self._resolve_targets(spec):
-            for item, delta in changes.items():
+            for item, delta in self._expand_any(agent, changes).items():
                 delta = max(delta, -agent.state.resources.get(item, 0))
                 if not delta:
                     continue
@@ -1065,6 +1121,21 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                               tick, importance=0.6)
                 await self._transfer(tick, "effect", item, abs(delta), "" if delta > 0 else agent.name,
                                      agent.name if delta > 0 else "", agent.location)
+
+    def _announce_item(self, item: str, amount: float, place: str, tick: int) -> None:
+        """Something an event put somewhere: those there see it; an item in plain sight
+        (`visible`) is news everyone hears."""
+        spec = self.config.items.get(item)
+        what = f"{fmt_amount(amount)} {item}"
+        if spec and spec.description:
+            what += f" ({spec.description})"
+        for agent in self.living_agents:
+            if agent.location == place:
+                agent.observe(f"New here in {place}: {what}. You can take it.", tick,
+                              importance=0.8)
+            elif spec and spec.visible:
+                agent.observe(f"Word is that {what} has turned up in {place}.", tick,
+                              importance=0.8)
 
     def _find_agent_by_name(self, name: str | None) -> Agent | None:
         """Find an agent by name (case-insensitive)."""
@@ -1133,5 +1204,6 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             "environment": self.environment.to_dict(),
             "society": self.society_state(),
             "holders": self.holders_state(self.clock.current_tick),
+            **({"scores": self.scores_state()} if self.config.scores.achievements else {}),
             "llm_stats": self.llm.stats,
         }

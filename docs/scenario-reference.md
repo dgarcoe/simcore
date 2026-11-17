@@ -175,7 +175,7 @@ outcomes (`votes.*.options.*`).
 | `kill` | target or list | Die |
 | `depart` | target or list | Leave the simulation alive |
 | `spawn` | list of agents | New agents arrive. Any agent field, plus `count` (1..50, names get numbered) |
-| `items` | `{target: {item: ±n}}` | Give or take items |
+| `items` | `{target: {item: ±n}}` | Give or take items (`"*": -n`: n at random). Items put in a place are announced to those there, and to everyone if the item is `visible` |
 | `add_condition` | `{target: condition or list}` | |
 | `remove_condition` | `{target: condition or list}` | |
 | `needs` | `{target: {need: ±x}}` | |
@@ -201,6 +201,25 @@ The catalog is optional: unlisted items still work, just without a description o
 | `armor` | int 0..10 | 0 | rpg: added to the defense of whoever carries it |
 | `visible` | bool | false | Everyone sees who carries it (a crown, a seal, the only key) |
 | `drops` | bool | false | Falls to the ground (the place's stock) when its carrier dies or leaves, so it can be taken |
+| `curse` | Curse | none | Cursed: see below |
+
+**Curse** (a cursed item): whoever carries it gets `condition` (give the condition `per_tick`
+harm or a `mind` that changes how they think) until the item is gone. With `sticky: true` it
+can't be given, dropped or traded away (it can still be stolen, and it falls with its carrier if
+`drops`). `broken_by: [item or action…]` breaks it: using that item on the carrier, or doing that
+scenario action to (or, without a target, by) the carrier; the item crumbles and the condition
+goes. `description` is what the carrier learns when the curse takes hold. Carriers are told their
+item is cursed and what breaks it; nobody else is.
+
+```yaml
+conditions:
+  poseido: {description: "solo piensas en el anillo", appearance: "mirada perdida",
+            per_tick: {mood: -0.05}, mind: {goals: ["Que nadie te quite el anillo"]}}
+items:
+  anillo_negro: {description: "un anillo de hierro negro", consumable: false,
+                 curse: {condition: poseido, sticky: true, broken_by: [agua_bendita, exorcizar]}}
+  agua_bendita: {description: "agua bendita"}
+```
 
 **Weapon:** `{damage, chance, ammo, ranged}`.
 - `damage` is the health taken on a hit (0.4 by default).
@@ -281,8 +300,10 @@ something they could do once they gather what it needs. The list says what is mi
 **Outcome:**
 - `health`, `energy`, `mood`: −1..1.
 - `add_conditions`, `remove_conditions`.
-- `items`: `{item: ±n}`.
+- `items`: `{item: ±n}`. `"*": -n` loses n items at random among what they carry.
 - `kill`: true.
+- `steal` (in `on_target`): `one` (an item at random) or `all` (everything they carry) goes to
+  whoever does the action; `steal_except: [item…]` are never taken this way.
 
 **Check** (rpg):
 - `attribute`: dexterity by default.
@@ -330,8 +351,53 @@ World rules are checked every tick, in order. All the `when` tests that are set 
   in `then` may say `{holder}`, which is replaced by that agent's name; it also works as an effect
   target (`kill: "{holder}"`). The item must be in `items`.
 - **Places:** `place: {name: {closed, hazard, occupants: Compare}}`.
+- **Points:** `score: Compare` is true when some living agent's points pass it (see `scores`).
+- **Alternatives:** `any: [When, …]` is true when at least one of those sets of tests holds (each
+  written like `when`), on top of the other tests in this `when`. Use it for several ways to win
+  in one rule; or write several rules with `end`.
+
+**Winner:** in a rule that ends the run, `{winner}` in `description` and `then` is replaced by who
+won: whoever kept the item (`holds`), reached the points (`score`, the best of them), the group
+counted (`count.faction`); otherwise the last one alive, otherwise the best score (ties joined with
+`&`). The run's end reports it as `winner`, with the final points.
 
 **Compare:** any of `lt`, `lte`, `gt`, `gte`, `eq`, `ne`, e.g. `{lte: 0}`.
+
+## `scores`
+
+Points and achievements. With `visible: true` (default) every agent sees its points, the ranking
+and what earns or loses points, so they go for them.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `visible` | bool | true | Agents see the points and the achievements |
+| `achievements` | map name → Achievement | `{}` | |
+
+**Achievement:** `description` (what agents read), `points` (negative for penalties), `when`
+(below) and `repeat` (false: earned once; true: earned again each time it happens again).
+
+**Achievement `when`** (one of):
+- `action: name` with `times: n` (default 1): doing a built-in action (`heal`, `move`, `give`…) or
+  a scenario action (only when it succeeds) that many times. With `repeat`, each `times` more.
+- `visited: all` or `visited: [place…]`: having been at every place, or at those.
+- `carries: item`: carrying it. `condition: name`: having it. With `repeat`, again each `every`
+  ticks (default 24) that it lasts.
+- `alive_at_end: true`: still alive when the run ends.
+- `without: action` with `every: n`: a penalty each `n` ticks without doing that action (use a
+  negative `points`).
+
+```yaml
+scores:
+  achievements:
+    explorador: {description: "Visitar todos los lugares", points: 10, when: {visited: all}}
+    curandero: {description: "Curar a tres personas", points: 5, when: {action: heal, times: 3}}
+    mecanico: {description: "Cada reparación", points: 2, repeat: true, when: {action: reparar_radio}}
+    superviviente: {description: "Seguir vivo al final", points: 10, when: {alive_at_end: true}}
+    vago: {description: "Un día sin trabajar", points: -3, when: {without: work, every: 24}}
+rules:
+  - when: {score: {gte: 30}}
+    then: {end: "{winner} llega a 30 puntos y gana la feria."}
+```
 
 ## `factions`
 
@@ -344,6 +410,12 @@ Groups agents start in. Agents can also found, join, leave and expel during the 
 | `members` | list of agents | `[]` | |
 | `rivals` | list of factions | `[]` | |
 | `color` | `#rrggbb` | `""` | For UIs |
+
+Groups change during the run. Anyone may `leave` a group, configured ones included (a configured
+group lasts while it has members). Agents are nudged to: leave when they distrust the leader; found
+a new group with two or more people here they get on well with, even if that means leaving theirs;
+and `join` a group whose members they like when they have none. Attacking a member of another group
+makes the two groups rivals. See `society.group_perks` for what belonging is worth.
 
 ## `votes`
 
@@ -377,6 +449,7 @@ routines:
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `spontaneous_groups` | bool | true | Agents may found groups of their own |
+| `group_perks` | bool | true | Belonging pays: each member here adds +1 (up to +2) to rolls and defense (+5% to plain chances), members turn against whoever attacks one of them, and each group has a common stash (`give`/`take` with the group's name as target, from anywhere) |
 | `healers` | list | médic, medic, enfermer, nurse, sanitari, veterinari, doctor, paramedic | Professions (substring) that can `heal` without an item |
 | `heal_removes` | list | herido, injured, wounded, hurt | Conditions a heal removes |
 

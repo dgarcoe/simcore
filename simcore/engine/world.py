@@ -6,8 +6,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from simcore.agents.actions import Action, ActionType
-from simcore.config.schema import HazardConfig, NeedConfig, Requirement, RuleConfig
-from simcore.engine.artifacts import fill_holder
+from simcore.config.schema import HazardConfig, NeedConfig, Requirement, RuleConfig, RuleWhen
+from simcore.engine.artifacts import WINNER, fill_holder
 from simcore.engine.effects import parse_effects
 from simcore.engine.events import EventType, SimEvent
 
@@ -172,7 +172,9 @@ class WorldMixin:
     # ── World rules ────────────────────────────────────────────────────
 
     def _rule_holds(self, rule: RuleConfig, tick: int) -> bool:
-        w = rule.when
+        return self._when_holds(rule.when, tick)
+
+    def _when_holds(self, w: RuleWhen, tick: int) -> bool:
         if w.at is not None and tick != w.at:
             return False
         if w.every is not None and tick % w.every != 0:
@@ -187,16 +189,8 @@ class WorldMixin:
                 return False
         if w.alive is not None and not w.alive.test(len(self.living_agents)):
             return False
-        if w.count is not None:
-            c = w.count
-            n = sum(1 for a in self.living_agents
-                    if (not c.condition or c.condition in a.state.conditions)
-                    and (not c.not_condition or c.not_condition not in a.state.conditions)
-                    and (not c.location or a.location == c.location)
-                    and (not c.faction or self._faction_of(a.name) == c.faction)
-                    and (not c.item or a.state.resources.get(c.item, 0) >= 1))
-            if not c.test(n):
-                return False
+        if w.count is not None and not w.count.test(self._count(w.count)):
+            return False
         for name, spec in w.place.items():
             place = self.environment.get_location(name)
             if place is None:
@@ -208,9 +202,44 @@ class WorldMixin:
             if spec.occupants is not None and not spec.occupants.test(
                     sum(1 for a in self.living_agents if a.location == name)):
                 return False
-        if w.holds is not None and self._hold_match(rule, tick) is None:
+        if w.holds is not None and self._hold_spec_match(w.holds, tick) is None:
+            return False
+        if w.score is not None and not self._score_leaders(w.score):
+            return False
+        if w.any and not any(self._when_holds(alt, tick) for alt in w.any):
             return False
         return True
+
+    def _count(self, c) -> int:
+        return sum(1 for a in self.living_agents
+                   if (not c.condition or c.condition in a.state.conditions)
+                   and (not c.not_condition or c.not_condition not in a.state.conditions)
+                   and (not c.location or a.location == c.location)
+                   and (not c.faction or self._faction_of(a.name) == c.faction)
+                   and (not c.item or a.state.resources.get(c.item, 0) >= 1))
+
+    def _score_leaders(self, cmp) -> list[str]:
+        """Living agents whose points pass the test, best first."""
+        return [n for n, p in self._ranking() if cmp.test(p)
+                and (a := self._find_agent_by_name(n)) and a.alive]
+
+    def _winner(self, rule: RuleConfig, tick: int) -> str:
+        """Who wins when a rule fires: whoever met it (kept the item, reached the points, the
+        group counted), else the last one standing, else the best score."""
+        for w in rule.when.all_tests():
+            if not self._when_holds(w, tick) and w is not rule.when:
+                continue
+            if w.holds is not None and (holder := self._hold_spec_match(w.holds, tick)):
+                return holder
+            if w.score is not None and (best := self._score_leaders(w.score)):
+                return best[0]
+            if w.count is not None and w.count.faction:
+                return w.count.faction
+        alive = self.living_agents
+        if len(alive) == 1:
+            return alive[0].name
+        top = self._top_scorers() if self._achievements else []
+        return " & ".join(top)
 
     async def _rules_tick(self, tick: int) -> None:
         await self._refresh_holders(tick)
@@ -219,10 +248,17 @@ class WorldMixin:
                 continue
             if rule.once:
                 self._fired_rules.add(i)
-            holder = self._hold_match(rule, tick) if rule.when.holds else None
+            holder = self._hold_match(rule, tick)
             description, then = rule.description, rule.then
             if holder:
                 description, then = fill_holder(description, holder), fill_holder(then, holder)
+            winner = ""
+            if WINNER in str(description) or WINNER in str(then) or "end" in then:
+                winner = self._winner(rule, tick)
+                description = fill_holder(description, winner or "nadie", WINNER)
+                then = fill_holder(then, winner or "nadie", WINNER)
+                if "end" in then:
+                    self.end_winner = winner
             if description:
                 self.environment.log_event(tick, "rule", description)
                 for agent in self.living_agents:
@@ -230,7 +266,8 @@ class WorldMixin:
             await self.event_bus.emit(SimEvent(
                 type=EventType.RULE_FIRED, tick=tick,
                 data={"rule": i, "description": description, "effects": then,
-                      **({"holder": holder} if holder else {})},
+                      **({"holder": holder} if holder else {}),
+                      **({"winner": winner} if winner else {})},
             ))
             await self.apply_effects(parse_effects(then), tick, cause=description)
             if not self._running:

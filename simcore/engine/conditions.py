@@ -366,7 +366,7 @@ class ConditionsMixin:
         cause = f"{agent.name} {action.content}"  # e.g. "Ramón muerde a Mateo", in the scenario's words
         if success:
             if target:
-                await self._apply_outcome(target, act.on_target, tick, cause)
+                await self._apply_outcome(target, act.on_target, tick, cause, taker=agent)
                 if act.on_target.health < 0 or act.on_target.kill:
                     await self._on_harm(agent, target, tick, "attacked")
                 target.observe(f"{agent.name} did '{name}' to me.", tick, importance=0.9)
@@ -375,6 +375,8 @@ class ConditionsMixin:
             elif not act.on_target.empty:
                 await self._apply_outcome(agent, act.on_target, tick, cause)
             await self._apply_outcome(agent, act.on_self, tick, cause)
+            if name in self._breakers():  # an exorcism, a ritual…
+                await self._break_curses(target or agent, name, tick)
             if act.world:
                 self.environment.global_state.update(act.world)
                 await self.event_bus.emit(SimEvent(
@@ -441,7 +443,8 @@ class ConditionsMixin:
                 return known, who.name if who else ""
         return name, ""
 
-    async def _apply_outcome(self, agent: Agent, out: Outcome, tick: int, cause: str) -> None:
+    async def _apply_outcome(self, agent: Agent, out: Outcome, tick: int, cause: str,
+                             taker: Agent | None = None) -> None:
         if out.empty or not agent.alive:
             return
         for stat in STATS:
@@ -453,7 +456,9 @@ class ConditionsMixin:
             await self.remove_condition(agent, name, tick, cause)
         for name in out.add_conditions:
             await self.add_condition(agent, name, tick, cause)
-        for item, delta in out.items.items():
+        if out.steal and taker is not None and taker is not agent:
+            await self._steal(taker, agent, out, tick)
+        for item, delta in self._expand_any(agent, out.items).items():
             have = agent.state.resources.get(item, 0)
             delta = max(delta, -have)
             if delta:
@@ -464,6 +469,41 @@ class ConditionsMixin:
                                      agent.name if delta > 0 else "", agent.location)
         if out.kill or agent.state.health <= 0:
             await self.kill(agent, tick, cause)
+
+    def _expand_any(self, agent: Agent, items: dict[str, float]) -> dict[str, float]:
+        """`"*": -2` loses two items at random among what the agent carries."""
+        if "*" not in items:
+            return items
+        out = {k: v for k, v in items.items() if k != "*"}
+        n = int(abs(items["*"])) if items["*"] < 0 else 0
+        pool = [k for k, v in agent.state.resources.items() for _ in range(int(v)) if k not in out]
+        for item in self._rng.sample(pool, min(n, len(pool))):
+            out[item] = out.get(item, 0) - 1
+        return out
+
+    async def _steal(self, thief: Agent, victim: Agent, out: Outcome, tick: int) -> None:
+        """The thief takes one item at random, or everything, from the victim."""
+        held = {k: v for k, v in victim.state.resources.items()
+                if v > 0 and k not in out.steal_except}
+        if not held:
+            return
+        if out.steal == "one":
+            item = self._rng.choice(sorted(held))
+            held = {item: 1 if held[item] >= 1 else held[item]}
+        for item, amount in held.items():
+            left = victim.state.resources.get(item, 0) - amount
+            if left > 1e-9:
+                victim.state.resources[item] = left
+            else:
+                victim.state.resources.pop(item, None)
+            thief.state.resources[item] = thief.state.resources.get(item, 0) + amount
+            await self._transfer(tick, "steal", item, amount, victim.name, thief.name,
+                                 thief.location)
+        what = ", ".join(f"{fmt_amount(v)} {k}" for k, v in held.items())
+        victim.observe(f"{thief.name} took from me: {what}.", tick, importance=0.9)
+        thief.observe(f"I took from {victim.name}: {what}.", tick, importance=0.7)
+        if hasattr(self, "_refresh_holders"):
+            await self._refresh_holders(tick)
 
     # ── Rule-controlled agents ────────────────────────────────────────
 
