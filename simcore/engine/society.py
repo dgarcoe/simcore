@@ -349,7 +349,8 @@ class SocietyMixin:
 
     def _weapon(self, agent: Agent) -> tuple[str, float, float, str]:
         """(item, damage, chance, ammo) of the best weapon the agent can use now; fists otherwise."""
-        best = ("", FISTS[0], FISTS[1], "")
+        fists = self.config.society.fists
+        best = ("", fists.damage, fists.chance, "")
         for item, qty in agent.state.resources.items():
             spec = self.config.items.get(item)
             w = spec.weapon if spec else None
@@ -415,6 +416,7 @@ class SocietyMixin:
         if hit and victim.state.health <= 0:
             await self.kill(victim, tick, f"{agent.name}{with_what}")
             params["killed" if not victim.alive else "knocked_out"] = True
+            await self._score_knockout(agent, tick)
             if threat:
                 await self._gain_xp(agent, 30, tick)
         action.target = victim.name

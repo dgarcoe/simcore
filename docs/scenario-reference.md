@@ -69,6 +69,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `planning` | bool | false | Each agent writes a short plan every `plan_every` ticks (one LLM call per plan) |
 | `pause_each_day` | bool | false | Pause at the end of each day (an `intermission` event); games with players use it so players read their day and change their agent's orders before the DM resumes |
 | `exhaustion` | bool | true | An agent whose energy is spent (≤ 0.02) can only rest: it collapses and rests that turn without asking the LLM (+0.3 energy). Energy drains a little every tick, more when working or fighting; its prompt warns it below 0.15. `false`: only the warning |
+| `exhaustion_place` | string | `""` | Where a collapsed agent is carried to recover (a hospital, home): it wakes up there with half its energy. Empty: it rests where it fell |
 | `plan_every` | int ≥ 1 | 8 | Ticks between plans |
 | `story` | bool | false | A narrator writes a chapter every `chapter_every` ticks (one LLM call each) |
 | `chapter_every` | int ≥ 1 | 24 | Ticks per chapter |
@@ -250,6 +251,7 @@ The catalog is optional: unlisted items still work, just without a description o
 | `visible` | bool | false | Everyone sees who carries it (a crown, a seal, the only key) |
 | `drops` | bool | false | Falls to the ground (the place's stock) when its carrier dies or leaves, so it can be taken |
 | `curse` | Curse | none | Cursed: see below |
+| `fuse` | `{ticks, on_holder, on_others, message}` | none | A fuse (dynamite, a bomb): lit when an agent picks the item up, it goes off `ticks` later wherever the item is. The fuse keeps burning when the item is given, stolen or dropped. When it goes off the unit is spent, `on_holder` (an outcome: `health`, `energy`, `mood`, `add_conditions`, `kill`…) hits whoever carries it and `on_others` everyone else at the place; `message` (`{item}`, `{place}`) is what everyone there hears. Holders and people nearby see "DANGER: a lit … goes off in N ticks" in their prompt; the event is `item_fuse` |
 
 **Curse** (a cursed item): whoever carries it gets `condition` (give the condition `per_tick`
 harm or a `mind` that changes how they think) until the item is gone. With `sticky: true` it
@@ -466,6 +468,7 @@ and what earns or loses points, so they go for them.
 - `visited: all` or `visited: [place…]`: having been at every place, or at those.
 - `carries: item`: carrying it. `condition: name`: having it. With `repeat`, again each `every`
   ticks (default 24) that it lasts.
+- `knocks_out: true`: knocking someone out (or killing them) in a fight (with `repeat`, each time).
 - `alive_at_end: true`: still alive when the run ends.
 - `captures: true`: being there when your group takes a territory (with `repeat`, each time).
 - `in_territory: true`: being in a territory your group holds (with `repeat`, each `every` ticks).
@@ -537,6 +540,7 @@ routines:
 | `spontaneous_groups` | bool | true | Agents may found groups of their own |
 | `lethal` | bool | true | false: nobody dies; whoever would die is knocked out (`knockout`): wakes up with `knockout.health`, at `knockout.place` (a hospital) if set, with `knockout.condition` if set, dropping what `drops` |
 | `knockout` | `{condition, place, health}` | `{}` | See `lethal` |
+| `fists` | `{damage, chance}` | `{damage: 0.1, chance: 0.6}` | An attack without a weapon: health it takes and chance of landing it |
 | `group_perks` | bool | true | Belonging pays: each member here adds +1 (up to +2) to rolls and defense (+5% to plain chances), members turn against whoever attacks one of them, and each group has a common stash (`give`/`take` with the group's name as target, from anywhere) |
 | `healers` | list | médic, medic, enfermer, nurse, sanitari, veterinari, doctor, paramedic | Professions (substring) that can `heal` without an item |
 | `heal_removes` | list | herido, injured, wounded, hurt | Conditions a heal removes |

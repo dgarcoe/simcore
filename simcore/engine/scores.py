@@ -147,6 +147,12 @@ class ScoresMixin:
             if ach.when.captures and (ach.repeat or not self._earned_once(agent, name)):
                 await self._award(agent, name, ach, tick)
 
+    async def _score_knockout(self, agent: Agent, tick: int) -> None:
+        """The agent knocked someone out (or killed them) in a fight."""
+        for name, ach in self._achievements.items():
+            if ach.when.knocks_out and (ach.repeat or not self._earned_once(agent, name)):
+                await self._award(agent, name, ach, tick)
+
     def _group_ranking(self) -> list[tuple[str, int]]:
         """Groups by their members' points plus `territories.group_points` per territory held."""
         bonus = self.config.territories.group_points

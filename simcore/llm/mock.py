@@ -128,6 +128,23 @@ class MockLLMProvider:
                           reasoning="Too many ears here")
         return None
 
+    def _fuse_decision(self, prompt: str, nearby: list[str], places: list[str],
+                       location: str) -> Action | None:
+        carried = re.search(r"DANGER: a lit (\S+) you carry", prompt)
+        if carried:
+            item = carried.group(1)
+            if nearby and self._rng.random() < 0.8:
+                return Action(type=ActionType.GIVE, target=self._rng.choice(nearby), item=item,
+                              reasoning=f"The {item} is about to go off: get rid of it!")
+            return Action(type=ActionType.DROP, item=item,
+                          reasoning=f"The {item} is about to go off: drop it!")
+        if re.search(r"DANGER: a lit \S+ lies here", prompt):
+            away = [p for p in places if p != location]
+            if away and self._rng.random() < 0.7:
+                return Action(type=ActionType.MOVE, target=self._rng.choice(away),
+                              reasoning="Something is about to blow up here: run!")
+        return None
+
     async def decide(self, system_prompt: str, user_prompt: str) -> Action:
         self._call_count += 1
 
@@ -146,6 +163,11 @@ class MockLLMProvider:
         # A changed mind that can't communicate (a zombie…): hunt, follow people, roam.
         if "You cannot speak or communicate" in user_prompt:
             return self._mute_decision(user_prompt, nearby, location)
+
+        # A lit fuse: pass it on (preferably to someone not of your group) or get away from it.
+        danger = self._fuse_decision(user_prompt, nearby, available_locations, location)
+        if danger:
+            return danger
 
         # The player's orders: an active plan, then the style (aggressive, sneaky, loyal…).
         ordered = self._orders_decision(user_prompt, nearby, available_locations, location)

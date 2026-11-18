@@ -128,7 +128,9 @@ class Action:
                 return f"works: {self.content}"
             case ActionType.REST:
                 if (self.parameters or {}).get("exhausted"):
-                    return "collapses from exhaustion and rests"
+                    to = (self.parameters or {}).get("to")
+                    return f"collapses from exhaustion and wakes up in {to}" if to else \
+                        "collapses from exhaustion and rests"
                 return "rests"
             case ActionType.OBSERVE:
                 return f"observes {self.target or 'surroundings'}"

@@ -185,6 +185,8 @@ class ItemConfig(BaseModel):
     drops: bool = False
     # Cursed: a condition while carried, maybe impossible to let go (see CurseConfig).
     curse: CurseConfig | None = None
+    # A fuse (dynamite, a bomb): lit when someone picks it up, it goes off `ticks` later.
+    fuse: FuseConfig | None = None
 
     @field_validator("on_use")
     @classmethod
@@ -193,6 +195,19 @@ class ItemConfig(BaseModel):
         if unknown:
             raise ValueError(f"on_use only accepts {', '.join(USE_KEYS)} (got {', '.join(sorted(unknown))})")
         return {k: max(-1.0, min(1.0, float(v))) for k, v in value.items()}
+
+
+class FuseConfig(BaseModel):
+    """An item that goes off a while after someone picks it up. The fuse keeps burning when it
+    changes hands (give it to a rival in time…) or lies on the ground; when it goes off the item is
+    spent, `on_holder` hits whoever carries it and `on_others` everyone else at the place."""
+
+    model_config = {"extra": "forbid"}
+
+    ticks: int = Field(3, ge=1)
+    on_holder: Outcome = Field(default_factory=lambda: Outcome())
+    on_others: Outcome = Field(default_factory=lambda: Outcome())
+    message: str = ""  # what everybody hears ("BOOM! The dynamite goes off in {place}")
 
 
 class Requirement(BaseModel):
@@ -334,6 +349,15 @@ class KnockoutConfig(BaseModel):
     health: float = Field(0.3, gt=0.0, le=1.0)  # health they wake up with
 
 
+class FistsConfig(BaseModel):
+    """Attacking without a weapon."""
+
+    model_config = {"extra": "forbid"}
+
+    damage: float = Field(0.1, ge=0.0, le=1.0)
+    chance: float = Field(0.6, ge=0.0, le=1.0)
+
+
 class TerritoriesConfig(BaseModel):
     """Places marked `territory` that groups fight over."""
 
@@ -351,6 +375,7 @@ class SocietyConfig(BaseModel):
     # false: nobody dies; whoever would die is knocked out instead (see `knockout`).
     lethal: bool = True
     knockout: KnockoutConfig = Field(default_factory=lambda: KnockoutConfig())
+    fists: FistsConfig = Field(default_factory=lambda: FistsConfig())  # attacks without a weapon
     # Belonging pays: members here add to each other's rolls and defense, share a common stash,
     # and turn against whoever attacks one of them.
     group_perks: bool = True
@@ -524,6 +549,7 @@ class AchievementWhen(BaseModel):
     condition: str = ""  # having this condition
     alive_at_end: bool = False  # still alive when the run ends
     captures: bool = False  # being there when your group takes a territory
+    knocks_out: bool = False  # knocking someone out (or killing them) in a fight
     in_territory: bool = False  # being in a territory of your group (with repeat: each `every`)
     without: str = ""  # penalty: going `every` ticks without doing this action
     every: int = Field(24, ge=1)
@@ -664,6 +690,9 @@ class SimulationConfig(BaseModel):
     pause_each_day: bool = False
     # an agent with no energy left can only rest (the engine makes it); false: just a warning
     exhaustion: bool = True
+    # where a collapsed agent wakes up (a hospital, home), with half its energy back;
+    # empty = it rests where it fell
+    exhaustion_place: str = ""
     # Role-playing rules: attributes, skills, d20 checks, experience and levels.
     rpg: bool = False
     # The narrator writes a short chapter every chapter_every ticks (one LLM call each).
@@ -781,6 +810,12 @@ class SimulationConfig(BaseModel):
         need([ko.condition] if ko.condition else [], "society.knockout")
         if ko.place and ko.place not in places:
             problems.append(f"society.knockout sends to unknown place '{ko.place}'")
+        if self.exhaustion_place and self.exhaustion_place not in places:
+            problems.append(f"exhaustion_place is an unknown place '{self.exhaustion_place}'")
+        for name, item in self.items.items():
+            if item.fuse:
+                for o in (item.fuse.on_holder, item.fuse.on_others):
+                    need(o.add_conditions + o.remove_conditions, f"item {name}'s fuse")
         if any(w.territories for r in self.rules for w in r.when.all_tests()) and not any(
                 loc.territory for loc in self.environment.locations):
             problems.append("a rule counts territories but no place is a territory")
@@ -797,7 +832,7 @@ class SimulationConfig(BaseModel):
                 problems.append(f"{where} carries unknown item '{w.carries}' (add it to items)")
             need([w.condition] if w.condition else [], where)
             if not any((w.action, w.visited, w.carries, w.condition, w.alive_at_end, w.without,
-                        w.captures, w.in_territory)):
+                        w.captures, w.in_territory, w.knocks_out)):
                 problems.append(f"{where} has no test in when")
         names = {a.name for a in self.agents}
         for fname, f in self.factions.items():

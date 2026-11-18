@@ -28,6 +28,7 @@ FEATURES = [
     "review",  # llm.record_prompts (decision_trace), POST /api/narrative, private player replays
     "players_live",  # GET /api/play/{code}/live, awards & highlights at the end, safe player text
     "bots",  # POST/DELETE /api/games/{id}/bots: made-up players to try a game out
+    "fuses",  # items.fuse, society.fists, when.knocks_out, simulation.exhaustion_place
 ]
 
 

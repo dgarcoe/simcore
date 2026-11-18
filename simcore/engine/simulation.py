@@ -22,6 +22,7 @@ from simcore.engine.awareness import AwarenessMixin
 from simcore.engine.conditions import ConditionsMixin
 from simcore.engine.conversations import ConversationsMixin
 from simcore.engine.curses import CursesMixin
+from simcore.engine.fuses import FusesMixin
 from simcore.engine.minds import MindsMixin
 from simcore.engine.rpg import RpgMixin
 from simcore.engine.scores import ScoresMixin
@@ -110,7 +111,7 @@ SOCIETY_ACTIONS = {
 
 class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin,
                        SearchMixin, StoryMixin, SocietyMixin, RpgMixin, ArtifactsMixin, ScoresMixin,
-                       CursesMixin, TerritoriesMixin, OrdersMixin):
+                       CursesMixin, TerritoriesMixin, OrdersMixin, FusesMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -139,6 +140,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_scores()
         self._init_territories()
         self._init_orders()
+        self._init_fuses()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -394,6 +396,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             await self._needs_tick(tick)
         await self._hazards_tick(tick)
         await self._curses_tick(tick)
+        await self._fuses_tick(tick)
         await self._territories_tick(tick)
         await self._scores_tick(tick)
         if self.config.rules:
@@ -456,10 +459,20 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             action = self._rule_decision(agent, controller)
         elif self.config.exhaustion and agent.state.energy <= EXHAUSTED:
             # Spent: nothing but rest until there is some energy back (no LLM call either).
-            action = Action(type=ActionType.REST, parameters={"exhausted": True},
+            params: dict = {"exhausted": True}
+            place = self.config.exhaustion_place
+            if place and place != agent.location and self.environment.get_location(place):
+                # carried off to recover (a hospital, home): wakes up there with energy back
+                self.environment.move_agent(agent.id, agent.location, place)
+                agent.state.location = place
+                agent.state.energy = max(agent.state.energy, 0.2)  # rest adds the rest
+                params["to"] = place
+            action = Action(type=ActionType.REST, parameters=params,
                             reasoning="I'm exhausted: I can't do anything but rest.")
-            agent.observe("You were too exhausted to do anything: you had to rest.", tick,
-                          importance=0.6)
+            agent.observe(
+                "You were too exhausted to go on: you collapsed"
+                + (f" and woke up in {place}." if "to" in params else " and had to rest."),
+                tick, importance=0.6)
         else:
             observation = self._build_observation(agent, tick, lang)
             if self.config.planning:
@@ -706,6 +719,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                       self._territories_prompt(agent),
                       self._scores_prompt(agent),
                       self._curses_prompt(agent),
+                      self._fuses_prompt(agent, tick),
                       "" if mute else self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
@@ -1321,5 +1335,6 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             "holders": self.holders_state(self.clock.current_tick),
             **({"scores": self.scores_state()} if self.config.scores.achievements else {}),
             **({"territories": self.territories_state()} if self._territories else {}),
+            **({"fuses": self.fuses_state()} if self._fused and self.fuses_state() else {}),
             "llm_stats": self.llm.stats,
         }

@@ -53,6 +53,7 @@ class EventType(Enum):
     INTERMISSION = "intermission"  # paused at the end of a day (pause_each_day)
     # what an agent was asked and answered (llm.record_prompts): recorded, not broadcast
     DECISION_TRACE = "decision_trace"
+    FUSE = "item_fuse"  # an item with a fuse goes off
     ORDERS = "orders"  # a player's conditional plan applies, or a red line stopped an action
 
 
