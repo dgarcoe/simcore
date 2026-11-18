@@ -175,6 +175,20 @@ class RpgMixin:
             self._init_sheet(agent, AgentConfig(name=agent.name))
         return self._sheets[agent.name]
 
+    def _item_bonus(self, agent: Agent, *keys: str) -> tuple[int, list[str]]:
+        """What the items it carries add to a roll for these keys (attribute, skill, action):
+        the best of each item, summed over items, at most +5 in all."""
+        total, used = 0, []
+        for item, qty in agent.state.resources.items():
+            spec = self.config.items.get(item)
+            if qty <= 0 or not spec or not spec.bonus:
+                continue
+            best = max((spec.bonus.get(k, 0) for k in keys if k), default=0, key=abs)
+            if best:
+                total += best
+                used.append(item)
+        return max(-5, min(5, total)), used
+
     def _bonus(self, agent: Agent, attribute: str, skill: str = "") -> int:
         sheet = self._sheet(agent)
         bonus = modifier(sheet["attributes"].get(attribute, 10))
@@ -204,7 +218,8 @@ class RpgMixin:
             sheet["skill_uses"][skill] += 1
         natural = self._rng.randint(1, 20)
         allies = self._ally_bonus(agent)
-        mod = self._bonus(agent, attribute, skill) + extra + allies
+        gear, gear_items = self._item_bonus(agent, attribute, skill, label)
+        mod = self._bonus(agent, attribute, skill) + extra + allies + gear
         total = natural + mod
         result = {
             "agent": agent.name,
@@ -218,11 +233,13 @@ class RpgMixin:
             "critical": natural == 20,
             "fumble": natural == 1,
             **({"allies": allies} if allies else {}),
+            **({"items": gear_items, "item_bonus": gear} if gear else {}),
         }
         if against is not None:
             other, o_attr, o_skill = against
             o_nat = self._rng.randint(1, 20)
-            o_total = o_nat + self._bonus(other, o_attr, o_skill)
+            o_gear, _ = self._item_bonus(other, o_attr, o_skill)
+            o_total = o_nat + self._bonus(other, o_attr, o_skill) + o_gear
             result["against"] = {
                 "agent": other.name,
                 "attribute": o_attr,
@@ -263,14 +280,17 @@ class RpgMixin:
             default=0,
         )
         dexterity = modifier(self._sheet(agent)["attributes"]["dexterity"])
-        return 10 + dexterity + armor + self._ally_bonus(agent)
+        gear, _ = self._item_bonus(agent, "defense")
+        return 10 + dexterity + armor + self._ally_bonus(agent) + gear
 
     async def _attack_roll(
         self, agent: Agent, victim: Agent, item: str, chance: float, tick: int
     ) -> tuple[bool, bool, bool]:
         """(hit, critical, fumble); without rpg the weapon's chance decides."""
         if not self.rpg:
-            edge = 0.05 * (self._ally_bonus(agent) - self._ally_bonus(victim))
+            edge = 0.05 * (self._ally_bonus(agent) - self._ally_bonus(victim)
+                           + self._item_bonus(agent, "attack")[0]
+                           - self._item_bonus(victim, "defense")[0])
             return self._rng.random() < chance + edge, False, False
         spec = self.config.items.get(item) if item else None
         ranged = bool(spec and spec.weapon and spec.weapon.ranged)
@@ -311,7 +331,8 @@ class RpgMixin:
         """A scenario action's check (rpg + check) or its plain chance."""
         check = getattr(act, "check", None)
         if not self.rpg or check is None:
-            return self._rng.random() < act.chance + 0.05 * self._ally_bonus(agent)
+            gear = self._item_bonus(agent, name)[0]
+            return self._rng.random() < act.chance + 0.05 * (self._ally_bonus(agent) + gear)
         against = None
         if check.against and target is not None:
             against = (target, check.against, check.against_skill)

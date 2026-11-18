@@ -110,3 +110,24 @@ def test_the_exhausted_wake_up_where_the_scenario_says():
     assert done.describe() == "collapses from exhaustion and wakes up in Hospital"
     with pytest.raises(ValueError, match="exhaustion_place is an unknown place"):
         make(exhaustion_place="Luna")
+
+
+def test_items_help_the_dice():
+    e = make(rpg=True, items={
+        "ganzua": {"description": "ganzúa", "consumable": False,
+                   "bonus": {"sleight_of_hand": 2, "robar": 1, "defense": 9}},
+        "amuleto": {"description": "amuleto", "consumable": False, "bonus": {"attack": 3}},
+    })
+    ana = ag(e, "Ana")
+    assert e._item_bonus(ana, "dexterity", "sleight_of_hand", "robar") == (0, [])
+    ana.state.resources.update({"ganzua": 1, "amuleto": 1})
+    assert e._item_bonus(ana, "dexterity", "sleight_of_hand", "robar") == (2, ["ganzua"])
+    assert e._item_bonus(ana, "strength", "athletics", "attack") == (3, ["amuleto"])
+    assert e._item_bonus(ana, "defense")[0] == 5  # capped at +5
+    before = e._defense(ag(e, "Bea"))
+    assert e._defense(ana) >= before + 5 - 2  # dexterity may differ by a little
+    rolls = []
+    e.event_bus.on(EventType.DICE_ROLL, lambda x: rolls.append(x.data))
+    asyncio.run(e._check(ana, "dexterity", "sleight_of_hand", dc=10, label="robar", tick=1))
+    assert rolls[-1]["item_bonus"] == 2 and rolls[-1]["items"] == ["ganzua"]
+    assert "helps your rolls: sleight of hand +2, robar +1, defense +5" in e._item_guide({"ganzua"})

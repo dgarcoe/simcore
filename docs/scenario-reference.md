@@ -252,6 +252,7 @@ The catalog is optional: unlisted items still work, just without a description o
 | `drops` | bool | false | Falls to the ground (the place's stock) when its carrier dies or leaves, so it can be taken |
 | `curse` | Curse | none | Cursed: see below |
 | `fuse` | `{ticks, on_holder, on_others, message}` | none | A fuse (dynamite, a bomb): lit when an agent picks the item up, it goes off `ticks` later wherever the item is. The fuse keeps burning when the item is given, stolen or dropped. When it goes off the unit is spent, `on_holder` (an outcome: `health`, `energy`, `mood`, `add_conditions`, `kill`…) hits whoever carries it and `on_others` everyone else at the place; `message` (`{item}`, `{place}`) is what everyone there hears. Holders and people nearby see "DANGER: a lit … goes off in N ticks" in their prompt; the event is `item_fuse` |
+| `bonus` | `{key: n}` | `{}` | Helps whoever carries it with the dice (−5…+5): keys are an attribute (`dexterity`), a skill (`sleight_of_hand`), an action (`attack`, `heal`, a scenario action) or `defense`. The best of each item counts and all items add up, at most +5 per roll. Without `rpg`, each point is +5% on that action's chance (`attack`, `defense` and scenario actions). Rolls show it (`item_bonus`, `items`) and agents read it in their item guide |
 
 **Curse** (a cursed item): whoever carries it gets `condition` (give the condition `per_tick`
 harm or a `mind` that changes how they think) until the item is gone. With `sticky: true` it

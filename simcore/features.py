@@ -29,6 +29,7 @@ FEATURES = [
     "players_live",  # GET /api/play/{code}/live, awards & highlights at the end, safe player text
     "bots",  # POST/DELETE /api/games/{id}/bots: made-up players to try a game out
     "fuses",  # items.fuse, society.fists, when.knocks_out, simulation.exhaustion_place
+    "item_bonus",  # items.<x>.bonus: carried items add to dice rolls (or chance)
 ]
 
 

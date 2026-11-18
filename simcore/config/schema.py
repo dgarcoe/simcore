@@ -187,6 +187,14 @@ class ItemConfig(BaseModel):
     curse: CurseConfig | None = None
     # A fuse (dynamite, a bomb): lit when someone picks it up, it goes off `ticks` later.
     fuse: FuseConfig | None = None
+    # Helps whoever carries it with the dice: {sleight_of_hand: 2, dar_un_palo: 2, defense: 1}.
+    # Keys: an attribute, a skill, an action (attack, heal or a scenario action) or "defense".
+    bonus: dict[str, int] = Field(default_factory=dict)
+
+    @field_validator("bonus")
+    @classmethod
+    def _check_bonus(cls, value: dict[str, int]) -> dict[str, int]:
+        return {k: max(-5, min(5, int(v))) for k, v in value.items() if int(v)}
 
     @field_validator("on_use")
     @classmethod

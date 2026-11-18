@@ -981,6 +981,13 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             text = name + (f" ({item.description})" if item.description else "")
             if use:
                 text += f" — use: {use}{'' if item.consumable else ', reusable'}"
+            if item.weapon:
+                text += f" — weapon: damage {item.weapon.damage:g}"
+            if item.armor:
+                text += f" — armor +{item.armor} to your defense"
+            if item.bonus:
+                text += " — carried, helps your rolls: " + ", ".join(
+                    f"{k.replace('_', ' ')} {v:+d}" for k, v in item.bonus.items())
             needed_for = [act for act, cfg in self.config.actions.items()
                           if name in self._needed(cfg)]
             if needed_for:
