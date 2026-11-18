@@ -700,6 +700,7 @@ def create_app(engine: SimulationEngine | None = None,
                 "groups": {g: f.get("color", "") for g, f in factions.items()},
                 **({"group_ranking": (data.get("scores") or {}).get("groups")}
                    if (data.get("scores") or {}).get("groups") else {}),
+                **({"markets": data["markets"]} if data.get("markets") else {}),
             }
         return {"status": game["status"], "next": len(events), "events": lived, "me": me,
                 "world": world}
