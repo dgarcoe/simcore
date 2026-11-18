@@ -70,7 +70,6 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `pause_each_day` | bool | false | Pause at the end of each day (an `intermission` event); games with players use it so players read their day and change their agent's orders before the DM resumes |
 | `exhaustion` | bool | true | An agent whose energy is spent (≤ 0.02) can only rest: it collapses and rests that turn without asking the LLM (+0.3 energy). Energy drains a little every tick, more when working or fighting; its prompt warns it below 0.15. `false`: only the warning |
 | `exhaustion_place` | string | `""` | Where a collapsed agent is carried to recover (a hospital, home): it wakes up there with half its energy. Empty: it rests where it fell |
-| `economy` | `{currency, group_wealth_points}` | `{currency: dinero, group_wealth_points: 0}` | The money item (markets' default currency, `when.wealth`, the "magnate" award) and points a group gets per unit of it in its common stash (group ranking) |
 | `plan_every` | int ≥ 1 | 8 | Ticks between plans |
 | `story` | bool | false | A narrator writes a chapter every `chapter_every` ticks (one LLM call each) |
 | `chapter_every` | int ≥ 1 | 24 | Ticks per chapter |
@@ -454,6 +453,22 @@ rules:
   - when: {territories: {gte: 5, ticks: 6}}
     then: {end: "{winner} se quedan con la ciudad. La leyenda es {mvp}."}
 ```
+
+## `economy`
+
+Money, at the top level of the YAML (like `territories`):
+
+```yaml
+economy: {currency: dinero, group_wealth_points: 0.25}
+```
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `currency` | item | `dinero` | The money item: markets' default currency, `when.wealth` and the "magnate" award |
+| `group_wealth_points` | number ≥ 0 | 0 | Points a group gets per unit of currency in its common stash (group ranking) |
+
+Markets are set per place (`environment.locations[].market`). Without any market, money is just
+another item agents give, trade and steal.
 
 ## `scores`
 

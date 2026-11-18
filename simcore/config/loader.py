@@ -40,6 +40,8 @@ def load_config(path: str | Path) -> SimulationConfig:
         sim_data["scores"] = raw["scores"]
     if raw.get("territories"):
         sim_data["territories"] = raw["territories"]
+    if raw.get("economy"):
+        sim_data["economy"] = raw["economy"]
     if raw.get("society"):
         sim_data["society"] = raw["society"]
 

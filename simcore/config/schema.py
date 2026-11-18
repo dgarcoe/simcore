@@ -775,7 +775,7 @@ class SimulationConfig(BaseModel):
         builtin = {"move", "speak", "trade", "interact", "wait", "observe", "work", "rest", "post",
                    "custom", "give", "take", "drop", "use", "accept", "decline",
                    "whisper", "invite", "follow", "find", "attack", "heal", "found_group", "join",
-                   "leave", "expel", "call_vote", "vote"}
+                   "leave", "expel", "call_vote", "vote", "buy", "sell"}
         problems: list[str] = []
 
         def need(names, where: str) -> None:
