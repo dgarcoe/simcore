@@ -1,7 +1,13 @@
-"""Territories groups fight over (`environment.locations[].territory`): a place belongs to the
-group with members there and no rivals, is contested while two groups are there, pays `income`
-into its group's common stash every `territories.every` ticks, and rules can end the run when a
-group holds enough of them (`when.territories`). Mixed into SimulationEngine.
+"""Territories groups fight over (`environment.locations[].territory`).
+
+Strength is the number of a group's members at the place (knocked-out ones don't count).
+- A place nobody holds goes at once to the strongest group there (a tie leaves it contested).
+- A held place with none of its owner's members there falls at once the same way.
+- A held place with rivals in it is contested; a rival group that outnumbers the owner's
+  members there for `territories.siege` ticks in a row takes it (ties favour the owner).
+A held place pays `income` into its group's stash every `territories.every` ticks
+(`contested_income` of it while contested), and rules can end the run when a group holds
+enough of them (`when.territories`). Mixed into SimulationEngine.
 """
 
 from __future__ import annotations
@@ -25,6 +31,8 @@ class TerritoriesMixin:
         }
         self._owners: dict[str, str] = {}
         self._contested: dict[str, list[str]] = {}
+        self._siege: dict[str, tuple[str, int]] = {}  # place → (group besieging it, ticks)
+        self._contest_sig: dict[str, list[str]] = {}
         self._owned_since: dict[str, int] = {}
         self._held_history: list[dict[str, int]] = []  # territories held per group, each tick
 
@@ -50,38 +58,19 @@ class TerritoriesMixin:
         if not self._territories:
             return
         for place in self._territories:
-            here = self._holders_here(place)
-            previous = self._owners.get(place, "")
-            if len(here) >= 2:
-                if sorted(here) != self._contested.get(place):
-                    self._contested[place] = sorted(here)
-                    await self._territory_event(
-                        place, previous, previous, tick, contested=sorted(here)
-                    )
-                continue
-            self._contested.pop(place, None)
-            if len(here) == 1:
-                (group,) = here
-                if group != previous:
-                    self._owners[place] = group
-                    self._owned_since[place] = tick
-                    await self._territory_event(place, group, previous, tick)
-                    for member in here[group]:
-                        member.observe(f"Your group {group} takes {place}.", tick, importance=0.8)
-                        await self._score_capture(member, tick)
-                    for agent in self.living_agents:
-                        if previous and self._faction_of(agent.name) == previous:
-                            agent.observe(
-                                f"{group} took {place} from your group.", tick, importance=0.8
-                            )
+            await self._contest(place, tick)
         every = self.config.territories.every
         if tick % every == 0:
             for place, items in self._income.items():
                 group = self._owners.get(place)
-                if not group or group not in self._factions or place in self._contested:
+                if not group or group not in self._factions:
                     continue
+                share = self.config.territories.contested_income if place in self._contested else 1
                 stash = self._factions[group].setdefault("stash", {})
-                for item, amount in items.items():
+                for item, full in items.items():
+                    amount = full * share
+                    if amount <= 0:
+                        continue
                     stash[item] = stash.get(item, 0) + amount
                     await self._transfer(
                         tick, "income", item, amount, f"location:{place}", f"group:{group}", place
@@ -92,6 +81,82 @@ class TerritoriesMixin:
                 counts[group] = counts.get(group, 0) + 1
         self._held_history.append(counts)
         del self._held_history[:-200]
+
+    async def _contest(self, place: str, tick: int) -> None:
+        here = self._holders_here(place)
+        owner = self._owners.get(place, "")
+        strength = {g: len(m) for g, m in here.items()}
+        rivals = {g: n for g, n in strength.items() if g != owner}
+        if not rivals:
+            if place in self._contested:
+                self._contested.pop(place)
+                self._siege.pop(place, None)
+                await self._territory_event(place, owner, owner, tick)
+            return
+        best = max(rivals.values())
+        leaders = [g for g, n in rivals.items() if n == best]
+        defenders = strength.get(owner, 0) if owner else 0
+        if defenders == 0:
+            # nobody's, or left unguarded: the strongest group there takes it at once
+            if len(leaders) == 1:
+                await self._take(place, leaders[0], here, tick)
+                return
+            self._siege.pop(place, None)
+        else:
+            leader = leaders[0] if len(leaders) == 1 and best > defenders else ""
+            if leader:
+                by, ticks = self._siege.get(place, ("", 0))
+                ticks = ticks + 1 if by == leader else 1
+                if ticks >= self.config.territories.siege:
+                    await self._take(place, leader, here, tick)
+                    return
+                self._siege[place] = (leader, ticks)
+                for agent in self.living_agents:
+                    if self._faction_of(agent.name) == owner:
+                        agent.observe(
+                            f"{leader} outnumber your group at {place}: they take it unless you"
+                            f" match them there ({ticks}/{self.config.territories.siege}).",
+                            tick,
+                            importance=0.8,
+                        )
+            else:
+                self._siege.pop(place, None)
+        groups = sorted(strength)
+        siege = self._siege.get(place)
+        sig = groups + ([f"{siege[0]}:{siege[1]}"] if siege else [])
+        if sig != self._contest_sig.get(place):
+            if place not in self._contested and owner:
+                for agent in self.living_agents:
+                    if self._faction_of(agent.name) == owner:
+                        agent.observe(
+                            f"Rivals ({', '.join(rivals)}) are in your territory {place}.",
+                            tick,
+                            importance=0.7,
+                        )
+            self._contest_sig[place] = sig
+            self._contested[place] = groups
+            await self._territory_event(place, owner, owner, tick, contested=groups)
+
+    async def _take(self, place: str, group: str, here: dict, tick: int) -> None:
+        previous = self._owners.get(place, "")
+        self._contested.pop(place, None)
+        self._contest_sig.pop(place, None)
+        self._siege.pop(place, None)
+        self._owners[place] = group
+        self._owned_since[place] = tick
+        await self._territory_event(place, group, previous, tick)
+        for member in here[group]:
+            member.observe(f"Your group {group} takes {place}.", tick, importance=0.8)
+            await self._score_capture(member, tick)
+        for agent in self.living_agents:
+            if previous and self._faction_of(agent.name) == previous:
+                agent.observe(f"{group} took {place} from your group.", tick, importance=0.8)
+
+    def _siege_data(self, place: str) -> dict:
+        if place not in self._siege:
+            return {}
+        by, ticks = self._siege[place]
+        return {"siege": {"by": by, "progress": ticks, "needed": self.config.territories.siege}}
 
     async def _territory_event(
         self, place: str, owner: str, previous: str, tick: int, contested: list[str] | None = None
@@ -105,6 +170,7 @@ class TerritoriesMixin:
                     "owner": owner,
                     "previous": previous,
                     **({"contested": contested} if contested else {}),
+                    **(self._siege_data(place) if contested else {}),
                 },
             )
         )
@@ -123,8 +189,18 @@ class TerritoriesMixin:
             return ""
         parts = []
         for place in self._territories:
-            if place in self._contested:
-                parts.append(f"{place}: contested ({' vs '.join(self._contested[place])})")
+            if place in self._siege:
+                by, ticks = self._siege[place]
+                parts.append(
+                    f"{place}: {self._owners.get(place)}, besieged by {by}"
+                    f" ({ticks}/{self.config.territories.siege})"
+                )
+            elif place in self._contested:
+                owner = self._owners.get(place)
+                parts.append(
+                    f"{place}: {owner + ', ' if owner else ''}"
+                    f"contested ({' vs '.join(self._contested[place])})"
+                )
             else:
                 parts.append(f"{place}: {self._owners.get(place) or 'nobody'}")
         mine = self._faction_of(agent.name)
@@ -133,8 +209,11 @@ class TerritoriesMixin:
             held = self._held_by(mine)
             text += (
                 f" Your group {mine} holds {len(held)} of {len(self._territories)}."
-                " A place is taken by being there with your group and no rivals;"
-                " it pays into your group's stash"
+                " An empty or unguarded place goes to the group with most members there."
+                " To take a guarded one, outnumber its owner's members there for"
+                f" {self.config.territories.siege} ticks in a row (a tie keeps the owner);"
+                " so leave someone guarding yours and bring friends to attack."
+                " A held place pays into its group's stash (less while rivals are in it)"
             )
             pays = {p: i for p, i in self._income.items()}
             if pays:
@@ -152,6 +231,7 @@ class TerritoriesMixin:
             p: {
                 "owner": self._owners.get(p, ""),
                 **({"contested": self._contested[p]} if p in self._contested else {}),
+                **self._siege_data(p),
             }
             for p in self._territories
         }

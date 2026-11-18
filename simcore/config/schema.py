@@ -341,6 +341,9 @@ class TerritoriesConfig(BaseModel):
 
     every: int = Field(4, ge=1)  # ticks between incomes
     group_points: int = 0  # per territory held, added to a group's points (group ranking)
+    # ticks in a row a rival group must outnumber the owner's members there to take a place
+    siege: int = Field(2, ge=1)
+    contested_income: float = Field(0.5, ge=0, le=1)  # share of its income a contested place pays
 
 
 class SocietyConfig(BaseModel):

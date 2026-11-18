@@ -406,9 +406,13 @@ when no test names one. The run's end reports `winner` and `mvp`.
 
 ## `territories`
 
-Places with `territory: true` belong to the group with members there and no rival group (agents
-with the `society.knockout` condition don't count). While two groups are there it is contested
-and keeps its owner; a place nobody stands in keeps its owner too. Agents see who holds each
+Places with `territory: true` are fought over by groups. A group's strength at a place is its
+members there (agents with the `society.knockout` condition don't count). A place nobody holds,
+or one with none of its owner's members there, goes at once to the strongest group there (a tie
+leaves it contested). A held place with rivals in it is contested: if one rival group outnumbers
+the owner's members there for `siege` ticks in a row it takes the place (a tie keeps the owner and
+restarts the siege); the owner's members are warned at each step. A contested place pays
+`contested_income` of its income; a place nobody stands in keeps its owner. Agents see who holds each
 territory, how many their group holds and what each pays. `when: {territories: {faction, gte,
 ticks}}` is true while a group (any, or `faction`) holds at least `gte` of them for `ticks` ticks
 in a row; `{winner}` is that group.
@@ -417,6 +421,8 @@ in a row; `{winner}` is that group.
 |---|---|---|---|
 | `every` | int ≥ 1 | 4 | Ticks between incomes (`income` of each held territory into its group's stash) |
 | `group_points` | int | 0 | Points per territory held added to a group's score (the group ranking) |
+| `siege` | int ≥ 1 | 2 | Ticks in a row a rival group must outnumber the owner's members to take a guarded place |
+| `contested_income` | 0–1 | 0.5 | Share of its income a place pays while rivals are in it |
 
 ```yaml
 territories: {every: 4, group_points: 5}

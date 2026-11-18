@@ -288,3 +288,56 @@ def test_the_demo_follows_each_style():
     aggressive, sneaky = run("agresivo"), run("sigiloso")
     assert aggressive["attack"] > sneaky["attack"]
     assert sneaky["steal"] > aggressive["steal"]
+
+
+def test_a_guarded_place_falls_only_to_a_siege_and_an_unguarded_one_at_once():
+    e = make_engine(factions={"Motoristas": {"members": ["Ana", "Bea"]},
+                              "Puerto": {"members": ["Carlos", "Dani"]}})
+    ag(e, "Dani").location = "Hospital"
+    asyncio.run(e._territories_tick(1))
+    assert e._owner_of("Puerto") == "Motoristas"
+    # two against two: contested, the owner keeps it and gets half its income
+    for name in ("Bea", "Carlos", "Dani"):
+        ag(e, name).location = "Puerto"
+    asyncio.run(e._territories_tick(2))
+    state = e.territories_state()["Puerto"]
+    assert state == {"owner": "Motoristas", "contested": ["Motoristas", "Puerto"]}
+    assert e._factions["Motoristas"]["stash"] == {"dinero": 1.5}
+    # outnumbered: a siege that takes `siege` ticks in a row
+    ag(e, "Bea").location = "Hospital"
+    asyncio.run(e._territories_tick(3))
+    assert e.territories_state()["Puerto"]["siege"] == {"by": "Puerto", "progress": 1, "needed": 2}
+    assert e._owner_of("Puerto") == "Motoristas"
+    seen = [m.content for m in ag(e, "Ana").memory.short_term]
+    assert any("outnumber your group at Puerto" in m for m in seen)
+    assert "besieged by Puerto (1/2)" in e._territories_prompt(ag(e, "Ana"))
+    asyncio.run(e._territories_tick(4))
+    assert e._owner_of("Puerto") == "Puerto"
+    assert changes(e)[-1] == {"place": "Puerto", "owner": "Puerto", "previous": "Motoristas"}
+    assert "contested" not in e.territories_state()["Puerto"]
+    # a held place nobody guards falls at once to whoever comes
+    ag(e, "Ana").location = "Club"
+    asyncio.run(e._territories_tick(5))
+    assert e._owner_of("Club") == "Motoristas"
+    ag(e, "Ana").location = "Hospital"
+    ag(e, "Carlos").location = "Club"
+    asyncio.run(e._territories_tick(6))
+    assert e._owner_of("Club") == "Puerto"
+
+
+def test_a_siege_restarts_when_the_owner_matches_the_attackers():
+    e = make_engine(factions={"Motoristas": {"members": ["Ana", "Bea"]},
+                              "Puerto": {"members": ["Carlos", "Dani"]}},
+                    territories={"every": 2, "siege": 3})
+    ag(e, "Dani").location = "Hospital"
+    asyncio.run(e._territories_tick(1))
+    ag(e, "Carlos").location = ag(e, "Dani").location = "Puerto"
+    asyncio.run(e._territories_tick(2))
+    asyncio.run(e._territories_tick(3))
+    assert e._siege["Puerto"] == ("Puerto", 2)
+    ag(e, "Bea").location = "Puerto"  # reinforcements: a tie keeps the owner
+    asyncio.run(e._territories_tick(4))
+    assert "Puerto" not in e._siege and e._owner_of("Puerto") == "Motoristas"
+    ag(e, "Bea").location = "Hospital"
+    asyncio.run(e._territories_tick(5))
+    assert e._siege["Puerto"] == ("Puerto", 1)
