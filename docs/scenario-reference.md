@@ -97,7 +97,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `type` | text | `grid` | Leave as is |
 | `size` | [w, h] | [20, 20] | Grid size for `position` |
 | `locations` | list | `[]` | The places (below) |
-| `global_state` | map | `{}` | World variables every agent sees (`power: true`, `oxygen: 1.0`). Rules read them and effects change them |
+| `global_state` | map | `{}` | World variables every agent sees (`power: true`, `oxygen: 1.0`). Rules read them and effects change them. Keys starting with `ui_` are for the UI and never reach a prompt: `ui_theme`, and `ui_words` (`{group: crew, territory: sector}`; plurals optional) for what the UI calls groups and territories |
 
 ### `environment.locations[]`
 
