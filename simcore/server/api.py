@@ -653,6 +653,7 @@ def create_app(engine: SimulationEngine | None = None,
                     "location": agent.get("location", ""),
                     "status": agent.get("status") or state.get("status") or "alive",
                     "health": state.get("health"),
+                    "energy": state.get("energy"),
                     "conditions": sorted((state.get("conditions") or {}).keys()),
                     "resources": state.get("resources") or agent.get("resources") or {},
                 })

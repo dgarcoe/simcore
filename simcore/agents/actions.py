@@ -127,6 +127,8 @@ class Action:
             case ActionType.WORK:
                 return f"works: {self.content}"
             case ActionType.REST:
+                if (self.parameters or {}).get("exhausted"):
+                    return "collapses from exhaustion and rests"
                 return "rests"
             case ActionType.OBSERVE:
                 return f"observes {self.target or 'surroundings'}"

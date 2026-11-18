@@ -40,6 +40,9 @@ from simcore.world.environment import Environment
 from simcore.world.interactions import InteractionResolver
 from simcore.world.location import Location
 
+# Energy at or below this: the agent can only rest (simulation.exhaustion).
+EXHAUSTED = 0.02
+
 logger = logging.getLogger("simcore")
 
 
@@ -451,6 +454,12 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         if controller is not None:
             # Rule-controlled (a zombie, an animal, a crowd): no LLM call.
             action = self._rule_decision(agent, controller)
+        elif self.config.exhaustion and agent.state.energy <= EXHAUSTED:
+            # Spent: nothing but rest until there is some energy back (no LLM call either).
+            action = Action(type=ActionType.REST, parameters={"exhausted": True},
+                            reasoning="I'm exhausted: I can't do anything but rest.")
+            agent.observe("You were too exhausted to do anything: you had to rest.", tick,
+                          importance=0.6)
         else:
             observation = self._build_observation(agent, tick, lang)
             if self.config.planning:

@@ -68,6 +68,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `language` | text | `en` | ISO code agents speak and think in (`es`, `pt`, `en`…) |
 | `planning` | bool | false | Each agent writes a short plan every `plan_every` ticks (one LLM call per plan) |
 | `pause_each_day` | bool | false | Pause at the end of each day (an `intermission` event); games with players use it so players read their day and change their agent's orders before the DM resumes |
+| `exhaustion` | bool | true | An agent whose energy is spent (≤ 0.02) can only rest: it collapses and rests that turn without asking the LLM (+0.3 energy). Energy drains a little every tick, more when working or fighting; its prompt warns it below 0.15. `false`: only the warning |
 | `plan_every` | int ≥ 1 | 8 | Ticks between plans |
 | `story` | bool | false | A narrator writes a chapter every `chapter_every` ticks (one LLM call each) |
 | `chapter_every` | int ≥ 1 | 24 | Ticks per chapter |

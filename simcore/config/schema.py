@@ -662,6 +662,8 @@ class SimulationConfig(BaseModel):
     planning: bool = False
     # Pause at the end of each day (games with players: they read their day and change orders).
     pause_each_day: bool = False
+    # an agent with no energy left can only rest (the engine makes it); false: just a warning
+    exhaustion: bool = True
     # Role-playing rules: attributes, skills, d20 checks, experience and levels.
     rpg: bool = False
     # The narrator writes a short chapter every chapter_every ticks (one LLM call each).

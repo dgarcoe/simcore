@@ -108,7 +108,9 @@ class Agent:
         persona_prompt = self.persona_prompt(mind)
 
         if self.state.energy < 0.15:
-            energy_desc = "CRITICAL — you are exhausted, you MUST rest this turn"
+            energy_desc = (
+                "CRITICAL — you are exhausted: rest now, or you will collapse and lose your turns"
+            )
         elif self.state.energy < 0.3:
             energy_desc = "low — consider resting soon"
         elif self.state.energy > 0.6:

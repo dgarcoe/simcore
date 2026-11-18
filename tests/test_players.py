@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 
+from simcore.agents.actions import Action, ActionType
 from simcore.agents.player_text import CUT, player_name, player_text
 from simcore.config.schema import OrdersConfig, SimulationConfig
 from simcore.engine.awards import AwardsTracker
@@ -137,3 +138,36 @@ def test_players_pick_orders_from_the_scenario_itself():
     assert opts["prizes"] == ["llave"] and opts["words"] == {"group": "tripulación"}
     assert opts["territories"] is True
     assert player_options(None) == {"actions": [], "prizes": []}
+
+
+def test_an_agent_with_no_energy_left_can_only_rest():
+    cfg = {
+        "name": "x",
+        "duration": "2 hours",
+        "environment": {"locations": [{"name": "Plaza"}, {"name": "Bar"}]},
+        "agents": [{"name": "Ana", "starting_location": "Plaza"}],
+    }
+    e = SimulationEngine(SimulationConfig.model_validate(cfg), demo_mode=True)
+    ana = e._find_agent_by_name("Ana")
+    asked = []
+
+    async def decide(*_):
+        asked.append(1)
+        return Action(type=ActionType.MOVE, target="Bar")
+
+    e.llm.decide = decide
+    ana.state.energy = 0.0
+    done = asyncio.run(e._agent_turn(ana, 1))
+    assert done.parameters.get("exhausted") and asked == []  # no LLM call, no move
+    assert ana.location == "Plaza" and ana.state.energy >= 0.3
+    assert done.describe() == "collapses from exhaustion and rests"
+    asyncio.run(e._agent_turn(ana, 2))  # rested: back to deciding
+    assert asked == [1] and ana.location == "Bar"
+    # a scenario may keep the old way: just a warning
+    off = SimulationEngine(SimulationConfig.model_validate({**cfg, "exhaustion": False}),
+                           demo_mode=True)
+    off.llm.decide = decide
+    bea = off._find_agent_by_name("Ana")
+    bea.state.energy = 0.0
+    asyncio.run(off._agent_turn(bea, 1))
+    assert bea.location == "Bar"
