@@ -32,6 +32,7 @@ from simcore.engine.society import SocietyMixin
 from simcore.engine.story import StoryMixin
 from simcore.engine.world import WorldMixin
 from simcore.engine.effects import ALL, LOCATION_PREFIX, Effects, parse_effects
+from simcore.engine.awards import AwardsTracker
 from simcore.engine.events import EventBus, EventType, SimEvent
 from simcore.llm.prompts import OBSERVATION_PROMPT
 from simcore.llm.provider import LLMProvider
@@ -114,6 +115,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self.config = config
         self.clock = SimClock.from_config(config.time_step, config.duration)
         self.event_bus = EventBus()
+        self._awards = AwardsTracker()
+        self.event_bus.on_all(self._awards.handle)
         self.environment = self._build_environment()
         self.agents: dict[str, Agent] = {}
         # Agents that enter later (arrives_at > 0), by tick.
@@ -317,6 +320,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._running = False
         await self._scores_at_end(self.clock.current_tick)
         await self._story_at_end(self.clock.current_tick)
+        awards, highlights = self.awards()
         await self.event_bus.emit(SimEvent(
             type=EventType.SIMULATION_END,
             tick=self.clock.current_tick,
@@ -324,9 +328,18 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                   "message": self.end_message,
                   **({"winner": self.end_winner} if self.end_winner else {}),
                   **({"mvp": self.end_mvp} if self.end_mvp else {}),
-                  **({"scores": self.scores_state()} if self.config.scores.achievements else {})},
+                  **({"scores": self.scores_state()} if self.config.scores.achievements else {}),
+                  **({"awards": awards} if awards else {}),
+                  **({"highlights": highlights} if highlights else {})},
         ))
         logger.info(f"Simulation complete. LLM stats: {self.llm.stats}")
+
+    def awards(self) -> tuple[list[dict], dict]:
+        """Titles for who did most of something, and each agent's top moments (people only: not
+        those driven by rules)."""
+        everyone = [a.name for a in self.agents.values() if self._controller(a) is None]
+        points = dict(self._scores) if hasattr(self, "_scores") else {}
+        return self._awards.results(everyone, points)
 
     def _limit_llm(self, n: int) -> None:
         """At most `n` calls to the LLM at once (decisions, plans, reflections, chronicle…)."""

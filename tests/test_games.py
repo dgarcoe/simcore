@@ -304,6 +304,19 @@ def test_orders_and_days_in_a_game(tmp_path, monkeypatch):
         assert {g["group"] for g in report["groups"]} == {"Motoristas", "Puerto"}
         assert report["territories"]["Puerto"]["owner"] == "Puerto"  # Rata stands in it
         assert all(e["tick"] <= 24 for e in report["diary"]["events"])
+        # Following the agent live: only what it lived, its own state, the map.
+        live = ana.get(f"/api/play/{code}/live", headers=h).json()
+        assert live["status"] == "intermission" and live["me"]["name"] == "Rata"
+        assert live["me"]["group"] == "Puerto" and live["me"]["location"] == "Puerto"
+        assert {p["name"] for p in live["world"]["places"]} >= {"Puerto", "Club"}
+        assert live["events"] and live["next"] > 0
+        assert not any(e["type"] == "decision_trace" for e in live["events"])
+        assert all(
+            "reasoning" not in (e.get("data") or {}) for e in live["events"]
+            if e.get("source") not in ("Rata", "", None)
+        )
+        again = ana.get(f"/api/play/{code}/live?since={live['next']}", headers=h).json()
+        assert again["events"] == [] and again["next"] == live["next"]
         # New orders reach the running agent.
         new = {"style": "agresivo", "plans": [{"when": {"day": 2}, "then": "Ve al Club"}]}
         assert (
@@ -330,6 +343,8 @@ def test_orders_and_days_in_a_game(tmp_path, monkeypatch):
             and res["result"]["rank"] == 1
             and res["result"]["players"] == 1
         )
+        assert all(set(a) == {"key", "agent", "value"} for a in res.get("awards", []))
+        assert ana.get(f"/api/play/{code}/live", headers=h).json()["status"] == "finished"
         plans = [e for e in res["diary"]["events"] if e["type"] == "orders"]
         assert plans and plans[0]["data"]["text"] == "Ve al Club"
         assert (

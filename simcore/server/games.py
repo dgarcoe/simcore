@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from simcore.agents.player_text import player_name, player_text
 from simcore.config.schema import AgentConfig
 from simcore.engine.rpg import ATTRIBUTES, SKILLS
 
@@ -97,22 +98,22 @@ def check_agent(agent: dict, template: dict, taken: set[str]) -> dict:
         if key not in t["editable"]:
             raise GameError(f"No puedes cambiar «{key}»: lo decide el DM.")
         out[key] = value
-    name = str(out.get("name", "")).strip()
+    name = player_name(out.get("name", ""))
     if "name" in t["editable"]:
         if not name:
             raise GameError("Tu agente necesita un nombre.")
         if name.lower() in taken:
             raise GameError(f"Ya hay alguien llamado «{name}» en esta partida.")
-        out["name"] = name[:40]
+        out["name"] = name
     limit = int(t["max_text"])
     for key in ("profession", "backstory"):
         if key in out:
-            out[key] = str(out[key] or "")[:limit]
+            out[key] = player_text(out[key], limit)
     if t["professions"] and out.get("profession") and out["profession"] not in t["professions"]:
         raise GameError(f"Profesión no permitida: elige entre {', '.join(t['professions'])}.")
     for key in ("goals", "secrets"):
         if key in out:
-            items = [str(x).strip()[:limit] for x in (out[key] or []) if str(x).strip()]
+            items = [x for x in (player_text(v, limit) for v in (out[key] or [])) if x]
             if len(items) > int(t["max_goals"]):
                 raise GameError(
                     f"Como mucho {t['max_goals']} {('metas' if key == 'goals' else 'secretos')}."
@@ -160,7 +161,10 @@ def check_orders(orders: dict | None) -> dict:
     from simcore.config.schema import OrdersConfig
 
     try:
-        return OrdersConfig.model_validate(orders or {}).model_dump(exclude_defaults=True)
+        from simcore.engine.orders import clean_orders
+
+        clean = clean_orders(OrdersConfig.model_validate(orders or {}))
+        return clean.model_dump(exclude_defaults=True)
     except ValueError as e:
         raise GameError(f"Órdenes no válidas: {e}") from e
 
@@ -380,13 +384,24 @@ _WORLD = {"scheduled_event", "injected_event", "rule_fired", "simulation_start",
           "territory_change", "intermission"}
 
 
-def diary(events: list[dict], name: str) -> list[dict]:
+def where_before(events: list[dict], start: int, name: str) -> str:
+    """Where an agent was at the last tick end before `start` (to go on a diary from there)."""
+    for e in reversed(events[:start]):
+        if e.get("type") == "tick_end":
+            for a in ((e.get("data") or {}).get("agents") or {}).values():
+                if a.get("name") == name:
+                    return str(a.get("location") or "")
+    return ""
+
+
+def diary(events: list[dict], name: str, where: str = "") -> list[dict]:
     """The events one agent lived: what it did, what was done or said to it, what happened where it
     was, and world news. Tick ends keep only its own state, so nothing else leaks."""
-    where: str = ""
     out = []
     for e in events:
         data = e.get("data") or {}
+        if e["type"] == "decision_trace":
+            continue
         if e["type"] == "tick_end":
             agents = data.get("agents") or {}
             own = {k: a for k, a in agents.items() if a.get("name") == name}

@@ -94,7 +94,7 @@ class RunRecorder:
         if event.type == EventType.SIMULATION_END:
             self.meta["end_reason"] = str(event.data.get("reason") or "completed")
             self.meta["end_message"] = str(event.data.get("message") or "")
-            for key in ("winner", "mvp", "scores"):
+            for key in ("winner", "mvp", "scores", "awards", "highlights"):
                 if event.data.get(key):
                     self.meta[key] = event.data[key]
             self.close("finished")

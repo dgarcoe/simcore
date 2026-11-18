@@ -16,10 +16,11 @@ from fastapi.staticfiles import StaticFiles
 from simcore.engine.events import EventType, SimEvent
 from simcore.llm.provider import LLMProvider
 from simcore.server import auth
-from simcore.server.games import GameError, GameStore, check_orders, diary, dm_view, private_replay
+from simcore.server.games import GameError, GameStore, check_orders, diary, dm_view, private_replay, where_before
 from simcore.server.scenarios import _dict_to_config
 from simcore.engine.simulation import SimulationEngine
 
+LIVE_CATCH_UP = 600  # events a player who just opened the page gets at once
 logger = logging.getLogger("simcore.server")
 
 
@@ -592,6 +593,11 @@ def create_app(engine: SimulationEngine | None = None,
         out: dict = {"status": game["status"], "published": pub, "agent": name}
         meta = run.get("meta") or {}
         if pub["result"]:
+            if meta.get("awards"):
+                out["awards"] = meta["awards"]
+            mine = (meta.get("highlights") or {}).get(name)
+            if mine:
+                out["highlights"] = mine
             scores = meta.get("scores") or {}
             ranking = [r["agent"] for r in scores.get("ranking", [])]
             mine = next((r["points"] for r in scores.get("ranking", [])
@@ -612,6 +618,62 @@ def create_app(engine: SimulationEngine | None = None,
         if pub["replay"]:
             out["replay"] = private_replay(run, name)
         return out
+
+    @app.get("/api/play/{code}/live")
+    async def play_live(code: str, request: Request, since: int = 0):
+        """What the player's agent lives while the game runs, from event `since` on: its diary,
+        its own state and the map (places, who holds them). Nothing it couldn't know."""
+        game, player = _player(code, request)
+        live = _live(game)
+        if live is None:
+            _settle(game)
+            return {"status": game["status"], "next": since, "events": []}
+        name = (player.get("agent") or {}).get("name") or player["display_name"]
+        events = live.events
+        start = max(0, min(int(since), len(events)))
+        if start == 0:
+            start = max(0, len(events) - LIVE_CATCH_UP)
+        lived = diary(events[start:], name, where_before(events, start, name))
+        last = next((e for e in reversed(events) if e.get("type") == "tick_end"), None)
+        me: dict = {"name": name}
+        world: dict = {}
+        if last:
+            data = last.get("data") or {}
+            agent = next((a for a in (data.get("agents") or {}).values()
+                          if a.get("name") == name), None)
+            if agent:
+                state = agent.get("state") or {}
+                me.update({
+                    "location": agent.get("location", ""),
+                    "status": agent.get("status") or state.get("status") or "alive",
+                    "health": state.get("health"),
+                    "conditions": sorted((state.get("conditions") or {}).keys()),
+                    "resources": state.get("resources") or agent.get("resources") or {},
+                })
+            ranking = (data.get("scores") or {}).get("ranking") or []
+            mine = next((i for i, r in enumerate(ranking) if r.get("agent") == name), None)
+            if mine is not None:
+                me.update({"points": ranking[mine]["points"], "rank": mine + 1,
+                           "players": len(ranking)})
+            factions = (data.get("society") or {}).get("factions") or {}
+            group = next((g for g, f in factions.items() if name in (f.get("members") or [])), "")
+            me["group"] = group
+            territories = data.get("territories") or {}
+            world = {
+                "clock": data.get("clock"),
+                "places": [
+                    {"name": loc.get("name"), "position": loc.get("position"),
+                     **({"territory": territories[loc["name"]]}
+                        if loc.get("name") in territories else {})}
+                    for loc in ((data.get("environment") or {}).get("locations") or {}).values()
+                    if not loc.get("virtual")
+                ],
+                "groups": {g: f.get("color", "") for g, f in factions.items()},
+                **({"group_ranking": (data.get("scores") or {}).get("groups")}
+                   if (data.get("scores") or {}).get("groups") else {}),
+            }
+        return {"status": game["status"], "next": len(events), "events": lived, "me": me,
+                "world": world}
 
     @app.post("/api/narrative")
     async def narrative(payload: dict = Body(default={})):

@@ -385,11 +385,11 @@ class MockLLMProvider:
         if "Your orders from your player" not in prompt:
             return None
         roll = self._rng.random()
-        for plan in re.findall(r"^- ACTIVE NOW \(your plan applies\): (.+)$", prompt, re.MULTILINE):
+        for plan in re.findall(r"^- ACTIVE NOW \(your plan applies\): «?(.+?)»?$", prompt, re.MULTILINE):
             where = [p for p in places if p.lower() in plan.lower() and p != location]
             if where and roll < 0.7:
                 return Action(type=ActionType.MOVE, target=where[0], reasoning=f"My plan: {plan}")
-        style = re.search(r"^- Style: ([^\n—.]+)", prompt, re.MULTILINE)
+        style = re.search(r"^- Style: «?([^\n—.«»]+)", prompt, re.MULTILINE)
         key = style_key(style.group(1)) if style else ""
         fight = re.findall(r"^- ([^:\n]+): .*You could", prompt, re.MULTILINE)
         foes = [n for n in fight if n in nearby]

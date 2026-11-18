@@ -1,0 +1,53 @@
+{
+  "id": "user:c2861b773600",
+  "builtin": false,
+  "meta": {
+    "name": "Plaza grabada",
+    "description": "",
+    "agents": 2,
+    "locations": 2,
+    "duration": "6 hours",
+    "language": "es",
+    "llm_model": "ollama/qwen2.5:7b"
+  },
+  "data": {
+    "simulation": {
+      "name": "Plaza grabada",
+      "duration": "6 hours",
+      "seed": 3,
+      "language": "es"
+    },
+    "llm": {
+      "model": "ollama/qwen2.5:7b",
+      "record_prompts": true
+    },
+    "environment": {
+      "locations": [
+        {
+          "name": "Plaza",
+          "position": [
+            0,
+            0
+          ]
+        },
+        {
+          "name": "Bar",
+          "position": [
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    "agents": [
+      {
+        "name": "Ana",
+        "starting_location": "Plaza"
+      },
+      {
+        "name": "Bea",
+        "starting_location": "Bar"
+      }
+    ]
+  }
+}

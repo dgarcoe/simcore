@@ -166,6 +166,17 @@ and above everything else.
 
 An active plan or a red line that stops an action is reported as an `orders` event.
 
+Everything a player writes (style, priorities, plans, text, and in a game their agent's name,
+profession, backstory, goals and secrets) is cleaned before it reaches a prompt: control characters
+go, quotes and braces are replaced, and what reads like an instruction to the model ("ignore the
+rules above", "system prompt", "respond only with…", chat-template tags) is replaced by `[…]`. The
+agent reads it quoted as `«…»`, introduced as its player's wishes for the character, never new rules.
+
+At the end of every run `simulation_end` carries `awards` (`[{key, agent, value}]`: knockouts,
+brawler, punching_bag, thief, talker, wanderer, lucky, unlucky, turncoat, tempted, schemer, pacifist,
+untouchable; people only, not agents driven by rules) and `highlights` (each agent's three most
+important moments: `{tick, kind, importance, …}`).
+
 ```yaml
 orders:
   style: sigiloso

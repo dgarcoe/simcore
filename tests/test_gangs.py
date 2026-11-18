@@ -202,16 +202,16 @@ def test_the_agent_reads_its_orders_first_and_plans_when_they_apply():
     e.event_bus.on_all(lambda x: e.events.append(x))
     ana = ag(e, "Ana")
     text = asyncio.run(e._orders_prompt(ana, 1))
-    assert text.startswith("Your orders from your player (follow them above everything else):")
-    assert "- Style: sigiloso — steal, spy and move unseen" in text
-    assert "- What matters most, in order: 1. ser la leyenda; 2. que gane mi banda." in text
+    assert text.startswith("Your orders from your player (follow them above everything else).")
+    assert "- Style: «sigiloso» — steal, spy and move unseen" in text
+    assert "- What matters most, in order: 1. «ser la leyenda»; 2. «que gane mi banda»." in text
     assert (
         "- Never: attack anyone in your own group." in text and "- Never: leave your group." in text
     )
-    assert "- Plan for later: Ve al Club y quédate" in text
-    assert "- In your player's words: Nada de peleas a lo loco." in text
+    assert "- Plan for later: «Ve al Club y quédate»" in text
+    assert "- In your player's words: «Nada de peleas a lo loco.»" in text
     later = asyncio.run(e._orders_prompt(ana, 25))  # day 2 with 1-hour ticks
-    assert "- ACTIVE NOW (your plan applies): Ve al Club y quédate" in later
+    assert "- ACTIVE NOW (your plan applies): «Ve al Club y quédate»" in later
     asyncio.run(e._orders_prompt(ana, 26))  # still active: reported once
     plans = [x.data for x in e.events if x.type == EventType.ORDERS and x.data["kind"] == "plan"]
     assert plans == [{"agent": "Ana", "kind": "plan", "text": "Ve al Club y quédate"}]
@@ -250,7 +250,7 @@ def test_new_orders_during_the_run():
     e = SimulationEngine(SimulationConfig.model_validate(with_orders()), demo_mode=True)
     e.set_orders("Ana", {"style": "agresivo", "text": "A por todas"})
     text = asyncio.run(e._orders_prompt(ag(e, "Ana"), 1))
-    assert "- Style: agresivo — fight for what you want" in text and "Never" not in text
+    assert "- Style: «agresivo» — fight for what you want" in text and "Never" not in text
 
 
 def test_the_demo_follows_each_style():
