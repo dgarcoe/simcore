@@ -25,6 +25,7 @@ FEATURES = [
     # cursed items, group perks (allies' bonus, common stash, mutual defense)
     "gangs",  # territories, when.territories, {mvp}, winner: group, society.lethal/knockout
     "orders",  # agents[].orders from players; pause_each_day with reports and new orders
+    "review",  # llm.record_prompts (decision_trace), POST /api/narrative, private player replays
 ]
 
 
