@@ -271,6 +271,7 @@ class LLMProvider:
                 try:
                     action = self._parse_action_strict(cached)
                     self._cache_hits += 1
+                    action.raw = cached
                     return action
                 except (json.JSONDecodeError, ValueError):
                     pass  # an unreadable answer cached by an older version: ask again
@@ -341,6 +342,7 @@ class LLMProvider:
                 if self.cache and cache_key:
                     self.cache.set(cache_key, content)
 
+                action.raw = content
                 return action
 
             except Exception as e:

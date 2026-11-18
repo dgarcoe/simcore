@@ -434,3 +434,20 @@ def diary(events: list[dict], name: str) -> list[dict]:
                 e = {**e, "data": data}
             out.append(e)
     return out
+
+
+def private_replay(run: dict, name: str) -> dict:
+    """A finished game's replay for one player: everyone's moves, but only their own orders
+    (the scenario's and the plans or red lines that fired), and no recorded prompts."""
+    config = json.loads(json.dumps(run.get("config") or {}))
+    for agent in config.get("agents") or []:
+        if agent.get("name") != name:
+            agent.pop("orders", None)
+    def mine(e: dict) -> bool:
+        return (e.get("data") or {}).get("agent", e.get("source")) == name
+
+    events = [
+        e for e in run.get("events") or []
+        if e.get("type") != "decision_trace" and (e.get("type") != "orders" or mine(e))
+    ]
+    return {"scenario": run.get("scenario"), "config": config, "events": events, "player": name}

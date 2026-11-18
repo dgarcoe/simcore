@@ -86,6 +86,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `max_tokens` | int | 500 | |
 | `frequency_penalty` | float | 0 | 0.5–1.5 helps small local models repeat less |
 | `num_ctx` | int ≥ 0 | 8192 | Ollama only: context window in tokens. Ollama's default (2048–4096) cuts long prompts from the start; 0 keeps it |
+| `record_prompts` | bool | false | Keep each decision's prompt and raw answer in the run's recording (`decision_trace` events, not sent live) to see in the replay why an agent did something. Big: for debugging |
 | `max_concurrency` | int ≥ 0 | 0 | At most this many LLM calls at once (0 = no limit); with many agents and a local server (Ollama), set it near `OLLAMA_NUM_PARALLEL` so calls don't time out waiting |
 | `presence_penalty` | float | 0 | |
 

@@ -70,6 +70,7 @@ class Action:
     options: list[str] = field(default_factory=list)  # call_vote: the choices
     emotion: str = ""  # how the agent feels (optional)
     intent: str = ""  # rpg: persuade / deceive / intimidate (speech)  # the current step of the agent's plan is done
+    raw: str = field(default="", repr=False)  # the model's answer, as it came
 
     def describe(self) -> str:
         """Human-readable description of the action."""

@@ -13,9 +13,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from simcore.engine.events import SimEvent
+from simcore.engine.events import EventType, SimEvent
+from simcore.llm.provider import LLMProvider
 from simcore.server import auth
-from simcore.server.games import GameError, GameStore, check_orders, diary, dm_view
+from simcore.server.games import GameError, GameStore, check_orders, diary, dm_view, private_replay
 from simcore.server.scenarios import _dict_to_config
 from simcore.engine.simulation import SimulationEngine
 
@@ -36,7 +37,7 @@ class SimulationServer:
         new_engine.event_bus.on_all(self._broadcast_event)
 
     async def _broadcast_event(self, event: SimEvent) -> None:
-        if not self._websockets:
+        if not self._websockets or event.type == EventType.DECISION_TRACE:
             return
         data = json.dumps(event.to_dict())
         disconnected = []
@@ -609,8 +610,49 @@ def create_app(engine: SimulationEngine | None = None,
         if pub["diary"]:
             out["diary"] = {"scenario": run["scenario"], "events": diary(run["events"], name)}
         if pub["replay"]:
-            out["replay"] = {k: run[k] for k in ("scenario", "config", "events")}
+            out["replay"] = private_replay(run, name)
         return out
+
+    @app.post("/api/narrative")
+    async def narrative(payload: dict = Body(default={})):
+        """A chronicle of a run from its key moments (recorded runs and replays): cached per run."""
+        run_id = str(payload.get("run_id") or "")
+        meta = None
+        if run_id:
+            try:
+                run = _runs().load(run_id)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            meta = (run or {}).get("meta")
+            if meta and meta.get("narrative"):
+                return {"narrative": meta["narrative"], "cached": True}
+        model = str(payload.get("model") or (meta or {}).get("model") or "")
+        if payload.get("demo") or (meta or {}).get("demo") or not model:
+            from simcore.llm.mock import MockLLMProvider
+            llm = MockLLMProvider()
+        else:
+            llm = LLMProvider(model=model)
+        moments = [m for m in payload.get("moments") or [] if isinstance(m, dict)][:40]
+        data = {
+            "ticks": int(payload.get("ticks") or 0),
+            "agents": [],
+            "key_events": [
+                {"tick": int(m.get("tick") or 0), "type": "", "source": ", ".join(m.get("agents") or [])[:60],
+                 "summary": str(m.get("text") or "")[:200]}
+                for m in moments
+            ],
+            "chapters": [],
+            "ending": str(payload.get("ending") or (meta or {}).get("end_message") or ""),
+        }
+        try:
+            text = await llm.generate_narrative(data, str(payload.get("language") or "es"))
+        except Exception as e:
+            logger.warning(f"Narrative generation failed: {e}")
+            raise HTTPException(502, f"El modelo no ha podido escribir la crónica: {e}")
+        if meta is not None and text:
+            meta["narrative"] = text
+            _runs().write_meta(meta)
+        return {"narrative": text}
 
     # ------------------------------------------------------------------
     # Recorded runs

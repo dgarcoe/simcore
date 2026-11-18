@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import asyncio
 import logging
 import re
@@ -459,6 +460,16 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 from simcore.llm.prompts import language_directive
                 persona_prompt = f"{persona_prompt}\n\n{language_directive(lang)}"
             action = await self.llm.decide(persona_prompt, prompt)
+            if self.config.llm.record_prompts:
+                await self.event_bus.emit(SimEvent(
+                    type=EventType.DECISION_TRACE,
+                    tick=tick,
+                    data={"agent": agent.name, "system": persona_prompt, "prompt": prompt,
+                          "answer": action.raw or json.dumps(
+                              {"action": action.type.value, "target": action.target,
+                               "reasoning": action.reasoning}, ensure_ascii=False)},
+                    source=agent.name,
+                ))
             alias = action.parameters.get("alias_of") if action.parameters else None
             if alias and alias in self.config.actions:
                 # "disparar", "curar"… named after a scenario action: that one wins over the built-in

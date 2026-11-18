@@ -643,6 +643,8 @@ class LLMConfig(BaseModel):
     # Ollama's context window in tokens. Its default (2048–4096) cuts a long decision prompt
     # from the start, where the character, its state and its inventory are; 0 = Ollama's own.
     num_ctx: int = Field(8192, ge=0)
+    # keep each decision's prompt and raw answer in the run's recording (big: for debugging)
+    record_prompts: bool = False
 
 
 class SimulationConfig(BaseModel):
