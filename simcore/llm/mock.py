@@ -128,6 +128,32 @@ class MockLLMProvider:
                           reasoning="Too many ears here")
         return None
 
+    def _market_decision(self, prompt: str) -> Action | None:
+        m = re.search(r"Market here \(prices in (\S+); you have ([\d.]+)\): (.*)", prompt)
+        if not m or self._rng.random() > 0.3:
+            return None
+        money, rest = float(m.group(2)), m.group(3)
+        buys = re.search(r"Buys from you: ([^.]*)\.", rest)
+        if buys:
+            for chunk in buys.group(1).split(";"):
+                item = chunk.strip().split(" ")[0]
+                if item and re.search(rf"\b{re.escape(item)} x\d", prompt):
+                    return Action(type=ActionType.SELL, item=item, amount=2,
+                                  reasoning=f"Good time to sell my {item}")
+        sells = re.search(r"sells ([^.]*)\.", rest)
+        if sells:
+            offers = []
+            for chunk in sells.group(1).split(";"):
+                parts = chunk.strip().split(" ")
+                if len(parts) >= 2 and parts[1].isdigit() and "sold out" not in chunk:
+                    offers.append((parts[0], int(parts[1])))
+            affordable = [o for o in offers if o[1] <= money]
+            if affordable:
+                item, _ = self._rng.choice(affordable)
+                return Action(type=ActionType.BUY, item=item, amount=1,
+                              reasoning=f"I could use a {item}")
+        return None
+
     def _fuse_decision(self, prompt: str, nearby: list[str], places: list[str],
                        location: str) -> Action | None:
         carried = re.search(r"DANGER: a lit (\S+) you carry", prompt)
@@ -168,6 +194,11 @@ class MockLLMProvider:
         danger = self._fuse_decision(user_prompt, nearby, available_locations, location)
         if danger:
             return danger
+
+        # A market here: sell what it buys, buy something useful now and then.
+        trade = self._market_decision(user_prompt)
+        if trade:
+            return trade
 
         # The player's orders: an active plan, then the style (aggressive, sneaky, loyal…).
         ordered = self._orders_decision(user_prompt, nearby, available_locations, location)

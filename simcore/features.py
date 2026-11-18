@@ -30,6 +30,7 @@ FEATURES = [
     "bots",  # POST/DELETE /api/games/{id}/bots: made-up players to try a game out
     "fuses",  # items.fuse, society.fists, when.knocks_out, simulation.exhaustion_place
     "item_bonus",  # items.<x>.bonus: carried items add to dice rolls (or chance)
+    "economy",  # locations[].market, buy/sell, prices/markets effects, when.wealth, own_territory
 ]
 
 

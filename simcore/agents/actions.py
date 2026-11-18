@@ -38,6 +38,9 @@ class ActionType(Enum):
     EXPEL = "expel"
     CALL_VOTE = "call_vote"
     VOTE = "vote"
+    # Markets
+    BUY = "buy"
+    SELL = "sell"
 
 
 ITEM_ACTIONS = frozenset({
@@ -126,6 +129,14 @@ class Action:
                 return f"interacts with {self.target}: {self.content}"
             case ActionType.WORK:
                 return f"works: {self.content}"
+            case ActionType.BUY:
+                return f"buys {fmt_amount(self.amount)} {self.item}" + (
+                    f" for {(self.parameters or {}).get('price')} {(self.parameters or {}).get('currency')}"
+                    if (self.parameters or {}).get("price") else "")
+            case ActionType.SELL:
+                return f"sells {fmt_amount(self.amount)} {self.item}" + (
+                    f" for {(self.parameters or {}).get('price')} {(self.parameters or {}).get('currency')}"
+                    if (self.parameters or {}).get("price") else "")
             case ActionType.REST:
                 if (self.parameters or {}).get("exhausted"):
                     to = (self.parameters or {}).get("to")

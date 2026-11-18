@@ -70,6 +70,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `pause_each_day` | bool | false | Pause at the end of each day (an `intermission` event); games with players use it so players read their day and change their agent's orders before the DM resumes |
 | `exhaustion` | bool | true | An agent whose energy is spent (≤ 0.02) can only rest: it collapses and rests that turn without asking the LLM (+0.3 energy). Energy drains a little every tick, more when working or fighting; its prompt warns it below 0.15. `false`: only the warning |
 | `exhaustion_place` | string | `""` | Where a collapsed agent is carried to recover (a hospital, home): it wakes up there with half its energy. Empty: it rests where it fell |
+| `economy` | `{currency, group_wealth_points}` | `{currency: dinero, group_wealth_points: 0}` | The money item (markets' default currency, `when.wealth`, the "magnate" award) and points a group gets per unit of it in its common stash (group ranking) |
 | `plan_every` | int ≥ 1 | 8 | Ticks between plans |
 | `story` | bool | false | A narrator writes a chapter every `chapter_every` ticks (one LLM call each) |
 | `chapter_every` | int ≥ 1 | 24 | Ticks per chapter |
@@ -119,6 +120,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `hazard` | Hazard | none | Danger here every tick |
 | `territory` | bool | false | Groups fight over it (see `territories`) |
 | `income` | `{item: n}` | `{}` | A territory pays this into its group's stash every `territories.every` ticks |
+| `market` | `{currency, sells, buys, stock, hours, elasticity, recovery}` | none | A market: agents here use the actions `buy` and `sell` (with `item` and `amount`, up to 5). `sells: {item: price}` is what it sells and its base price, `buys: {item: price}` what it pays; `currency` (default `economy.currency`). Every unit bought makes the item `elasticity` (0.15) dearer here and every unit sold that much cheaper; prices drift back to the base by `recovery` (0.1) each tick. `stock: {item: n}` limits what it sells (sales to it refill it); unlisted items never run out. `hours: [20, 6]` opens it only from 20:00 to 06:00. Agents here see its prices (and "pricey/cheap now"), others where the other markets are; events can change prices (`prices`) or open and close it (`markets`). Each trade is a `market_trade` event |
 
 **Hazard:** `{label, per_tick, condition}`.
 - `label` is the text others see, e.g. "on fire".
@@ -233,6 +235,8 @@ outcomes (`votes.*.options.*`).
 | `rumor` | `{target: text or {text, true}}` | Plant a rumor |
 | `join` | `{target: group}` | Put agents in a group (created if new) |
 | `leave` | target or list | Take agents out of their group |
+| `prices` | `{place: {item: factor}}` | Multiply an item's price at a market (`2` doubles it: scarcity; `0.5` halves it) |
+| `markets` | `{place: {open: true\|false}}` | Open or close a market, overriding its hours |
 | `end` | text | End the run with this message |
 | *anything else* | value | Set a world variable in `global_state` (`power: false`) |
 
@@ -347,6 +351,7 @@ something they could do once they gather what it needs. The list says what is mi
 - `not_conditions`: must have none.
 - `professions`: any of these; a substring is enough, so `médic` matches «médica».
 - `items`: must carry at least `{item: n}`.
+- `own_territory: true`: standing in a territory its group holds (protection rackets, taxes).
 
 **Outcome:**
 - `health`, `energy`, `mood`: −1..1.
@@ -470,6 +475,7 @@ and what earns or loses points, so they go for them.
 - `carries: item`: carrying it. `condition: name`: having it. With `repeat`, again each `every`
   ticks (default 24) that it lasts.
 - `knocks_out: true`: knocking someone out (or killing them) in a fight (with `repeat`, each time).
+- `wealth: n`: carrying at least `n` of `economy.currency` (once).
 - `alive_at_end: true`: still alive when the run ends.
 - `captures: true`: being there when your group takes a territory (with `repeat`, each time).
 - `in_territory: true`: being in a territory your group holds (with `repeat`, each `every` ticks).

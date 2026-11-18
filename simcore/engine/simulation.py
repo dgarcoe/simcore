@@ -22,6 +22,7 @@ from simcore.engine.awareness import AwarenessMixin
 from simcore.engine.conditions import ConditionsMixin
 from simcore.engine.conversations import ConversationsMixin
 from simcore.engine.curses import CursesMixin
+from simcore.engine.economy import EconomyMixin
 from simcore.engine.fuses import FusesMixin
 from simcore.engine.minds import MindsMixin
 from simcore.engine.rpg import RpgMixin
@@ -111,7 +112,8 @@ SOCIETY_ACTIONS = {
 
 class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMixin, AwarenessMixin,
                        SearchMixin, StoryMixin, SocietyMixin, RpgMixin, ArtifactsMixin, ScoresMixin,
-                       CursesMixin, TerritoriesMixin, OrdersMixin, FusesMixin):
+                       CursesMixin, TerritoriesMixin, OrdersMixin, FusesMixin,
+                       EconomyMixin):
     """Core simulation engine that orchestrates agents, environment, and time."""
 
     def __init__(self, config: SimulationConfig, demo_mode: bool = False,
@@ -141,6 +143,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_territories()
         self._init_orders()
         self._init_fuses()
+        self._init_economy()
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -344,7 +347,9 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         those driven by rules)."""
         everyone = [a.name for a in self.agents.values() if self._controller(a) is None]
         points = dict(self._scores) if hasattr(self, "_scores") else {}
-        return self._awards.results(everyone, points)
+        wealth = {a.name: self._wealth(a) for a in self.agents.values() if a.alive}
+        return self._awards.results(everyone, points, wealth=wealth,
+                                    earned=dict(self._earned_selling))
 
     def _limit_llm(self, n: int) -> None:
         """At most `n` calls to the LLM at once (decisions, plans, reflections, chronicle…)."""
@@ -397,6 +402,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         await self._hazards_tick(tick)
         await self._curses_tick(tick)
         await self._fuses_tick(tick)
+        await self._economy_tick(tick)
         await self._territories_tick(tick)
         await self._scores_tick(tick)
         if self.config.rules:
@@ -486,6 +492,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             found = self._mind(agent)
             mind = found[1] if found else None
             special = [n for n, _ in self._available_actions(agent)] if self.config.actions else []
+            if self._is_open(agent.location):
+                special += ["buy", "sell"]
             prompt = agent.build_prompt(observation, language=lang, mind=mind, special=special)
             # Memory keeps a one-line note, not the whole situation: old copies of "People here",
             # "Items you can take here" or "Special actions" made models act on a past place.
@@ -540,6 +548,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 action = Action(type=ActionType.WAIT, reasoning="No social network available")
         elif action.type in ITEM_ACTIONS:
             action = await self._apply_item_action(agent, action, tick)
+        elif action.type in (ActionType.BUY, ActionType.SELL):
+            action = await self._market_action(agent, action, tick)
         elif action.type == ActionType.CUSTOM:
             action = await self._apply_custom_action(agent, action, tick)
         elif action.type == ActionType.FIND:
@@ -720,6 +730,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                       self._scores_prompt(agent),
                       self._curses_prompt(agent),
                       self._fuses_prompt(agent, tick),
+                      self._economy_prompt(agent),
                       "" if mute else self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
@@ -837,6 +848,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             ))
         for name, change in effects.locations.items():
             await self._change_place(name, change, tick, cause)
+        if effects.prices or effects.markets:
+            self._apply_market_effects(effects.prices, effects.markets)
         for spec, changes in effects.needs.items():
             for agent in self._resolve_targets(spec):
                 for name, delta in changes.items():
@@ -1343,5 +1356,6 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             **({"scores": self.scores_state()} if self.config.scores.achievements else {}),
             **({"territories": self.territories_state()} if self._territories else {}),
             **({"fuses": self.fuses_state()} if self._fused and self.fuses_state() else {}),
+            **({"markets": self.markets_state()} if self._markets else {}),
             "llm_stats": self.llm.stats,
         }

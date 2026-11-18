@@ -48,6 +48,8 @@ ACTION_ALIASES = {
     "olhar": "observe", "trabajar": "work", "trabalhar": "work",
     "descansar": "rest", "dormir": "rest", "reposar": "rest",
     "dar": "give", "entregar": "give", "regalar": "give",
+    "comprar": "buy", "purchase": "buy", "compra": "buy", "vender": "sell", "venda": "sell",
+    "vende": "sell", "sell_item": "sell", "buy_item": "buy",
     "coger": "take", "tomar": "take", "recoger": "take", "agarrar": "take", "pillar": "take",
     "apanhar": "take", "recolher": "take",
     "soltar": "drop", "dejar": "drop", "tirar": "drop", "largar": "drop", "deixar": "drop",

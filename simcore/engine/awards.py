@@ -27,6 +27,8 @@ AWARDS = (
     "schemer",  # their player's plans that fired
     "pacifist",  # no attack at all, most points among those
     "untouchable",  # never hit, most points among those
+    "magnate",  # most money at the end (economy.currency)
+    "tycoon",  # most money made selling at markets
 )
 HIGHLIGHTS = 3
 
@@ -110,14 +112,25 @@ class AwardsTracker:
             if abs(points) >= 5:
                 self._moment(who, t, 0.55 if points > 0 else 0.5, "points", points=points,
                              description=str(d.get("description") or d.get("achievement") or ""))
+        elif kind == EventType.MARKET:
+            if d.get("kind") == "sell" and int(d.get("price") or 0) >= 8:
+                self._moment(who, t, 0.45, "deal", item=str(d.get("item") or ""),
+                             amount=d.get("amount") or 1, price=d.get("price"),
+                             currency=str(d.get("currency") or ""), place=str(d.get("place") or ""))
         elif kind == EventType.CONDITION_CHANGE:
             if d.get("change") == "transformed":
                 self._moment(who, t, 0.9, "transformed", into=str(d.get("into") or ""))
 
-    def results(self, everyone: list[str], points: dict[str, int]) -> tuple[list[dict], dict]:
+    def results(self, everyone: list[str], points: dict[str, int],
+                wealth: dict[str, float] | None = None,
+                earned: dict[str, float] | None = None) -> tuple[list[dict], dict]:
         """Awards [{key, agent, value}] and each agent's highlights (most important first)."""
         for name, places in self.places.items():
             self.count["wanderer"][name] = len(places)
+        for name, money in (wealth or {}).items():
+            self.count["magnate"][name] = int(money)
+        for name, money in (earned or {}).items():
+            self.count["tycoon"][name] = int(money)
 
         def best(candidates: dict[str, int]) -> tuple[str, int] | None:
             items = [(n, v) for n, v in candidates.items() if v > 0 and n in everyone]

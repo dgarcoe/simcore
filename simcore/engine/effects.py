@@ -36,7 +36,8 @@ from typing import Any
 from simcore.config.schema import SpawnConfig
 
 RESERVED_KEYS = frozenset({"health", "kill", "depart", "spawn", "items", "add_condition",
-                           "remove_condition", "needs", "locations", "adjust", "end", "rumor", "join", "leave"})
+                           "remove_condition", "needs", "locations", "adjust", "end", "rumor", "join", "leave",
+                           "prices", "markets"})
 LOCATION_KEYS = frozenset({"closed", "hazard", "access"})
 LOCATION_PREFIX = "location:"
 ALL = "all"
@@ -63,12 +64,15 @@ class Effects:
     rumor: dict[str, tuple[str, bool | None]] = field(default_factory=dict)
     join: dict[str, str] = field(default_factory=dict)  # target → group
     leave: list[str] = field(default_factory=list)  # targets
+    prices: dict[str, dict[str, float]] = field(default_factory=dict)  # place → item → ×factor
+    markets: dict[str, bool] = field(default_factory=dict)  # place → open (overrides its hours)
 
     @property
     def empty(self) -> bool:
         return not (self.global_updates or self.health or self.kill or self.depart or self.spawn
                     or self.items or self.add_condition or self.remove_condition or self.needs
-                    or self.locations or self.adjust or self.end or self.rumor or self.join or self.leave)
+                    or self.locations or self.adjust or self.end or self.rumor or self.join or self.leave
+                    or self.prices or self.markets)
 
 
 def _targets(value: Any, key: str) -> list[str]:
@@ -134,6 +138,19 @@ def parse_effects(raw: dict[str, Any] | None) -> Effects:
                 if change.get("access") is not None:
                     Requirement.model_validate(change["access"])
                 out.locations[str(place)] = dict(change)
+        elif key == "prices":
+            if not isinstance(value, dict) or not all(isinstance(v, dict) for v in value.values()):
+                raise ValueError("effects.prices must map places to items and factors, e.g. {Hospital: {botiquin: 2}}")
+            for place, items in value.items():
+                if not all(isinstance(n, (int, float)) and not isinstance(n, bool) and n > 0
+                           for n in items.values()):
+                    raise ValueError(f"effects.prices.{place} must map items to factors above 0")
+                out.prices[str(place)] = {str(k): float(n) for k, n in items.items()}
+        elif key == "markets":
+            if not isinstance(value, dict) or not all(
+                    isinstance(v, dict) and isinstance(v.get("open"), bool) for v in value.values()):
+                raise ValueError("effects.markets must map places to {open: true|false}")
+            out.markets = {str(p): bool(v["open"]) for p, v in value.items()}
         elif key == "adjust":
             if not isinstance(value, dict) or not all(
                     isinstance(n, (int, float)) and not isinstance(n, bool) for n in value.values()):

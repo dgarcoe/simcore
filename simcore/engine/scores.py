@@ -132,6 +132,10 @@ class ScoresMixin:
                     done = self._last_did.get(agent.name, {}).get(w.without, 0)
                     if tick - max(done, last or 0) >= w.every:
                         await self._award(agent, name, ach, tick)
+                elif w.wealth:
+                    if (not self._earned_once(agent, name)
+                            and agent.state.resources.get(self.currency, 0) + 1e-9 >= w.wealth):
+                        await self._award(agent, name, ach, tick)
                 elif w.in_territory:
                     group = self._faction_of(agent.name)
                     if not group or self._owner_of(agent.location) != group:
@@ -160,6 +164,9 @@ class ScoresMixin:
         for group, f in self._factions.items():
             points = sum(self._score_of(m) for m in f["members"])
             points += bonus * len(self._held_by(group)) if hasattr(self, "_held_by") else 0
+            rich = self.config.economy.group_wealth_points
+            if rich:
+                points += int(rich * (f.get("stash") or {}).get(self.currency, 0))
             out.append((group, points))
         return sorted(out, key=lambda x: (-x[1], x[0]))
 
@@ -209,6 +216,8 @@ class ScoresMixin:
                 extra = f" (still to visit: {', '.join(left)})"
             elif w.without:
                 extra = f' (every {w.every} ticks without "{w.without}")'
+            elif w.wealth:
+                extra = f" (you have {int(agent.state.resources.get(self.currency, 0))})"
             (gain if ach.points >= 0 else lose).append(f"{what} {sign}{extra}")
         if gain:
             lines.append("Earn: " + "; ".join(gain) + ".")

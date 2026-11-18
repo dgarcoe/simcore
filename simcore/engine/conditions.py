@@ -101,6 +101,10 @@ class ConditionsMixin:
             prof = agent.persona.profession.lower()
             if not any(p.lower() in prof for p in req.professions):
                 return False
+        if req.own_territory:
+            group = self._faction_of(agent.name)
+            if not group or getattr(self, "_owner_of", lambda _: "")(agent.location) != group:
+                return False
         have = agent.state.resources
         return not items or all(have.get(k, 0) + 1e-9 >= v for k, v in req.items.items())
 

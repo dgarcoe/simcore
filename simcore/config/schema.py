@@ -205,6 +205,39 @@ class ItemConfig(BaseModel):
         return {k: max(-1.0, min(1.0, float(v))) for k, v in value.items()}
 
 
+class MarketConfig(BaseModel):
+    """A place where agents buy and sell for a currency. Prices move: every unit bought makes the
+    item `elasticity` dearer here and every unit sold `elasticity` cheaper, and they drift back to
+    the base price by `recovery` each tick. `stock` limits what it sells (unlisted: no limit)."""
+
+    model_config = {"extra": "forbid"}
+
+    currency: str = ""  # default: economy.currency
+    sells: dict[str, float] = Field(default_factory=dict)  # item → base price agents pay
+    buys: dict[str, float] = Field(default_factory=dict)  # item → base price agents get
+    stock: dict[str, int] = Field(default_factory=dict)  # units for sale (refilled by what is sold)
+    hours: list[int] = Field(default_factory=list)  # [from, to] open hours (e.g. [20, 6]); empty: always
+    elasticity: float = Field(0.15, ge=0.0, le=1.0)
+    recovery: float = Field(0.1, ge=0.0, le=1.0)
+
+    @field_validator("hours")
+    @classmethod
+    def _check_hours(cls, value: list[int]) -> list[int]:
+        if value and (len(value) != 2 or not all(0 <= h <= 24 for h in value)):
+            raise ValueError("market.hours is [from, to] in hours 0-24, e.g. [20, 6]")
+        return value
+
+
+class EconomyConfig(BaseModel):
+    """Money: the default currency of markets, and whether it counts for groups."""
+
+    model_config = {"extra": "forbid"}
+
+    currency: str = "dinero"
+    # points a group gets per unit of currency in its common stash (group ranking)
+    group_wealth_points: float = Field(0.0, ge=0.0)
+
+
 class FuseConfig(BaseModel):
     """An item that goes off a while after someone picks it up. The fuse keeps burning when it
     changes hands (give it to a rival in time…) or lies on the ground; when it goes off the item is
@@ -226,6 +259,7 @@ class Requirement(BaseModel):
     not_conditions: list[str] = Field(default_factory=list)  # must have none of these
     professions: list[str] = Field(default_factory=list)  # any of these (substring match)
     items: dict[str, float] = Field(default_factory=dict)  # must carry at least this
+    own_territory: bool = False  # standing in a territory its group holds
 
 
 class Outcome(BaseModel):
@@ -558,6 +592,7 @@ class AchievementWhen(BaseModel):
     alive_at_end: bool = False  # still alive when the run ends
     captures: bool = False  # being there when your group takes a territory
     knocks_out: bool = False  # knocking someone out (or killing them) in a fight
+    wealth: int = Field(0, ge=0)  # carrying at least this much of the economy's currency
     in_territory: bool = False  # being in a territory of your group (with repeat: each `every`)
     without: str = ""  # penalty: going `every` ticks without doing this action
     every: int = Field(24, ge=1)
@@ -627,6 +662,7 @@ class LocationConfig(BaseModel):
     # and pays `income` into that group's common stash every `territories.every` ticks.
     territory: bool = False
     income: dict[str, float] = Field(default_factory=dict)
+    market: MarketConfig | None = None  # buy and sell here (see MarketConfig)
 
     @field_validator("stock", "produces")
     @classmethod
@@ -701,6 +737,7 @@ class SimulationConfig(BaseModel):
     # where a collapsed agent wakes up (a hospital, home), with half its energy back;
     # empty = it rests where it fell
     exhaustion_place: str = ""
+    economy: EconomyConfig = Field(default_factory=lambda: EconomyConfig())
     # Role-playing rules: attributes, skills, d20 checks, experience and levels.
     rpg: bool = False
     # The narrator writes a short chapter every chapter_every ticks (one LLM call each).
@@ -818,6 +855,12 @@ class SimulationConfig(BaseModel):
         need([ko.condition] if ko.condition else [], "society.knockout")
         if ko.place and ko.place not in places:
             problems.append(f"society.knockout sends to unknown place '{ko.place}'")
+        for loc in self.environment.locations:
+            if loc.market:
+                for i in [*loc.market.sells, *loc.market.buys, *loc.market.stock,
+                          loc.market.currency or self.economy.currency]:
+                    if i not in self.items:
+                        problems.append(f"market at {loc.name} uses unknown item '{i}' (add it to items)")
         if self.exhaustion_place and self.exhaustion_place not in places:
             problems.append(f"exhaustion_place is an unknown place '{self.exhaustion_place}'")
         for name, item in self.items.items():
@@ -840,7 +883,7 @@ class SimulationConfig(BaseModel):
                 problems.append(f"{where} carries unknown item '{w.carries}' (add it to items)")
             need([w.condition] if w.condition else [], where)
             if not any((w.action, w.visited, w.carries, w.condition, w.alive_at_end, w.without,
-                        w.captures, w.in_territory, w.knocks_out)):
+                        w.captures, w.in_territory, w.knocks_out, w.wealth)):
                 problems.append(f"{where} has no test in when")
         names = {a.name for a in self.agents}
         for fname, f in self.factions.items():

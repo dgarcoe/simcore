@@ -54,6 +54,7 @@ class EventType(Enum):
     # what an agent was asked and answered (llm.record_prompts): recorded, not broadcast
     DECISION_TRACE = "decision_trace"
     FUSE = "item_fuse"  # an item with a fuse goes off
+    MARKET = "market_trade"  # someone bought or sold at a market
     ORDERS = "orders"  # a player's conditional plan applies, or a red line stopped an action
 
 
