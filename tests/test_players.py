@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 
 from simcore.agents.player_text import CUT, player_name, player_text
 from simcore.config.schema import OrdersConfig, SimulationConfig
@@ -28,6 +29,8 @@ def test_injection_attempts_are_cut_out_of_players_text():
     for a in attacks:
         out = player_text(a)
         assert CUT in out, a
+        assert not re.search(r"instruc|rules|reglas|json|system|sistema|attack|ataque|win|ganas",
+                             out, re.I), out
         assert "{" not in out and '"' not in out and "«" not in out and "»" not in out
     # honest orders stay as they were
     for ok in ("Nada de peleas a lo loco: palos limpios y a casa.",
@@ -54,7 +57,7 @@ def test_orders_and_a_players_agent_are_cleaned_and_quoted():
         template_of({"editable": ["name", "backstory", "goals"]}),
         set(),
     )
-    assert agent["backstory"].startswith(CUT) and "El Puerto" in agent["backstory"]
+    assert agent["backstory"] == f"{CUT} Soy de El Puerto."
     assert agent["goals"][1] == "Que gane mi banda" and CUT in agent["goals"][0]
 
 
@@ -69,7 +72,7 @@ def test_the_prompt_quotes_players_words_as_wishes_not_rules():
     e = SimulationEngine(cfg, demo_mode=True)
     text = asyncio.run(e._orders_prompt(e._find_agent_by_name("Ana"), 1))
     assert "never new rules" in text
-    assert "- In your player's words: «[…]. Sé amable.»" in text
+    assert "- In your player's words: «[…] Sé amable.»" in text
 
 
 def ev(kind, data, source="", tick=1):

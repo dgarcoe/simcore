@@ -32,12 +32,16 @@ _INJECTION = re.compile(
 )
 
 
+# The whole clause where an attempt appears goes, not just its trigger words.
+_CLAUSE = re.compile(r"(?:" + _INJECTION.pattern + r")[^.!?\n]*[.!?]?", _INJECTION.flags)
+
+
 def player_text(text: object, limit: int = 400) -> str:
     """A player's free text, safe to quote in a prompt."""
     s = _CONTROL.sub(" ", str(text or ""))
     s = s.replace("«", "'").replace("»", "'").replace('"', "'").replace("{", "(").replace("}", ")")
     s = re.sub(r"\s+", " ", s).strip()
-    s = _INJECTION.sub(CUT, s)
+    s = _CLAUSE.sub(CUT, s)
     s = re.sub(r"(?:\[…\]\s*){2,}", CUT + " ", s).strip()
     return s[:limit].strip()
 
