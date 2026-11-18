@@ -439,6 +439,28 @@ def create_app(engine: SimulationEngine | None = None,
         except (GameError, ValueError) as e:
             raise HTTPException(422, str(e))
 
+    @app.post("/api/games/{game_id}/bots")
+    async def add_bots(game_id: str, payload: dict = Body(default={})):
+        """Made-up players to try the game out: `{count}`."""
+        game = _game_or_404(game_id)
+        try:
+            scenario = _get_store().get(game["scenario_id"])
+        except Exception:  # noqa: BLE001 — without the scenario, bots just get no group
+            scenario = None
+        try:
+            return dm_view(_games().add_bots(game_id, int(payload.get("count") or 0),
+                                             (scenario or {}).get("data")))
+        except (GameError, ValueError) as e:
+            raise HTTPException(422, str(e))
+
+    @app.delete("/api/games/{game_id}/bots")
+    async def remove_bots(game_id: str):
+        _game_or_404(game_id)
+        try:
+            return dm_view(_games().remove_bots(game_id))
+        except GameError as e:
+            raise HTTPException(409, str(e))
+
     @app.post("/api/games/{game_id}/launch")
     async def launch_game(game_id: str, payload: dict = Body(default={})):
         game = _game_or_404(game_id)

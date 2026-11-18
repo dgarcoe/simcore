@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import os
+import random
 import re
 import secrets
 import uuid
@@ -276,6 +277,46 @@ class GameStore:
                 player["agent"] = payload["agent"]
             if "submitted" in payload:
                 player["submitted"] = bool(payload["submitted"])
+        return self.save(game)
+
+    def add_bots(self, game_id: str, count: int, scenario: dict | None = None,
+                 seed: int | None = None) -> dict:
+        """The DM adds `count` bots (made-up players with random agents) to try the game out."""
+        from simcore.server.bots import bot_agent
+
+        game = self._require(game_id)
+        if game["status"] not in ("open", "closed"):
+            raise GameError("Solo se pueden añadir bots antes de lanzar la partida.")
+        room = int(game["max_players"]) - len(game["players"])
+        if count < 1:
+            raise GameError("¿Cuántos bots?")
+        if room < count:
+            raise GameError(f"No caben: quedan {max(0, room)} plazas.")
+        rng = random.Random(seed)
+        for _ in range(count):
+            taken = {
+                str((p.get("agent") or {}).get("name") or p["display_name"]).lower()
+                for p in game["players"]
+            }
+            agent = check_agent(bot_agent(game, scenario, taken, rng),
+                                {**game["template"], "editable": [*game["template"]["editable"],
+                                                                  "name"]}, taken)
+            game["players"].append({
+                "id": uuid.uuid4().hex[:12],
+                "display_name": agent["name"],
+                "token_hash": _hash(secrets.token_urlsafe(24)),  # nobody holds it: no login
+                "agent": agent,
+                "submitted": True,
+                "bot": True,
+                "joined": _now(),
+            })
+        return self.save(game)
+
+    def remove_bots(self, game_id: str) -> dict:
+        game = self._require(game_id)
+        if game["status"] not in ("open", "closed"):
+            raise GameError("La partida ya está en marcha: los bots se quedan.")
+        game["players"] = [p for p in game["players"] if not p.get("bot")]
         return self.save(game)
 
     def build_scenario(self, game: dict, scenario: dict) -> dict:

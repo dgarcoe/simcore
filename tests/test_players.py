@@ -171,3 +171,80 @@ def test_an_agent_with_no_energy_left_can_only_rest():
     bea.state.energy = 0.0
     asyncio.run(off._agent_turn(bea, 1))
     assert bea.location == "Bar"
+
+
+def test_the_dm_adds_bots_that_respect_the_template(tmp_path):
+    from simcore.server.games import GameError, GameStore
+
+    store = GameStore(tmp_path)
+    game = store.create({
+        "scenario_id": "x", "max_players": 6,
+        "template": {"editable": ["name", "faction", "orders", "attributes", "skills"],
+                     "factions": ["Rojos", "Azules"], "attribute_budget": 4, "max_skills": 1},
+    })
+    _, human, _ = store.join(game["code"], "Ana")
+    game = store.add_bots(game["id"], 4, {"factions": {"Rojos": {"goal": "a"}, "Verdes": {}}},
+                          seed=1)
+    bots = [p for p in game["players"] if p.get("bot")]
+    assert len(bots) == 4 and all(b["submitted"] for b in bots)
+    names = [b["agent"]["name"] for b in bots]
+    assert len(set(names)) == 4 and "Ana" not in names
+    groups = [b["agent"]["faction"] for b in bots]
+    assert sorted(groups) == ["Azules", "Azules", "Rojos", "Rojos"]  # spread evenly
+    for b in bots:
+        a = b["agent"]
+        assert sum(v - 10 for v in a["attributes"].values()) <= 4 and len(a["skills"]) <= 1
+        assert a["orders"]["style"] and set(a) <= {"name", "faction", "orders", "attributes",
+                                                   "skills"}
+    # a bot can't log in: nobody has its link
+    for token in ("", "x"):
+        try:
+            _, p = store.player_for(game["code"], token)
+            assert not p.get("bot")
+        except PermissionError:
+            pass
+    try:
+        store.add_bots(game["id"], 2)
+        raise AssertionError("no room left")
+    except GameError as e:
+        assert "quedan 1" in str(e)
+    game = store.remove_bots(game["id"])
+    assert [p["display_name"] for p in game["players"]] == ["Ana"]
+    assert human["display_name"] == "Ana"
+
+
+def test_bots_through_the_api_and_into_the_run(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from simcore.server.api import create_app
+    from simcore.server.scenarios import ScenarioStore
+    from tests.test_gangs import CITY
+
+    monkeypatch.setenv("SIMCORE_RUNS_DIR", str(tmp_path / "runs"))
+    monkeypatch.setenv("SIMCORE_GAMES_DIR", str(tmp_path / "games"))
+    monkeypatch.delenv("SIMCORE_DM_PASSWORD", raising=False)
+    store = ScenarioStore(tmp_path / "user")
+    sid = store.create({"simulation": {"name": "Bots", "duration": "4 hours"},
+                        **{k: v for k, v in json.loads(json.dumps(CITY)).items()
+                           if k not in ("name", "duration")}})["id"]
+    with TestClient(create_app(scenario_store=store)) as dm:
+        game = dm.post("/api/games", json={
+            "scenario_id": sid, "max_players": 10,
+            "template": {"editable": ["name", "faction", "orders"]}}).json()
+        game = dm.post(f"/api/games/{game['id']}/bots", json={"count": 3}).json()
+        bots = [p for p in game["players"] if p.get("bot")]
+        assert len(bots) == 3 and "token_hash" not in bots[0]
+        assert {b["agent"]["faction"] for b in bots} <= {"Motoristas", "Puerto"}
+        assert dm.post(f"/api/games/{game['id']}/bots", json={"count": 0}).status_code == 422
+        names = {b["agent"]["name"] for b in bots}
+        r = dm.post(f"/api/games/{game['id']}/launch", json={"demo": True, "speed": 0})
+        assert r.status_code == 200
+        engine_agents = None
+        for _ in range(100):
+            runs = dm.get("/api/runs").json()["runs"]
+            if runs:
+                engine_agents = {a["name"] for a in dm.get(f"/api/runs/{runs[0]['id']}")
+                                 .json()["config"]["agents"]}
+                break
+        assert engine_agents and names <= engine_agents
+        assert dm.delete(f"/api/games/{game['id']}/bots").status_code == 409
