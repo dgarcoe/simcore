@@ -118,3 +118,22 @@ def test_a_run_ends_with_awards_for_people_not_for_rule_driven_agents():
     assert end.get("awards") and all(a["agent"] in {"Ana", "Bea", "Carlos", "Dani"}
                                       for a in end["awards"])
     assert set(end.get("highlights", {})) <= {"Ana", "Bea", "Carlos", "Dani"}
+
+
+def test_players_pick_orders_from_the_scenario_itself():
+    from simcore.server.games import player_options
+
+    opts = player_options({
+        "actions": {"sabotaje": {"description": "romper la máquina", "target": "none"},
+                    "delatar": {"description": "contarle al capitán", "target": "agent"}},
+        "items": {"llave": {"visible": True}, "pan": {}},
+        "environment": {"global_state": {"ui_words": {"group": "tripulación", "x": "y"}},
+                        "locations": [{"name": "Puente", "territory": True}]},
+    })
+    assert opts["actions"] == [
+        {"name": "sabotaje", "description": "romper la máquina", "target": False},
+        {"name": "delatar", "description": "contarle al capitán", "target": True},
+    ]
+    assert opts["prizes"] == ["llave"] and opts["words"] == {"group": "tripulación"}
+    assert opts["territories"] is True
+    assert player_options(None) == {"actions": [], "prizes": []}

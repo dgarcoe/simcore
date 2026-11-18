@@ -19,13 +19,13 @@ if TYPE_CHECKING:
 
 # What each style means, in the words the agent reads (Spanish and English names).
 STYLES = {
-    "aggressive": "fight for what you want; attack rivals when the odds are yours, "
-    "raid their places",
+    "aggressive": "fight for what you want; go after rivals when the odds are yours",
     "negotiator": "make deals, trade, persuade; fight only when talking has failed",
-    "sneaky": "steal, spy and move unseen; avoid open fights and the police",
+    "sneaky": "act unseen: spy, take what you need quietly, avoid open fights and authorities",
     "loyal": "stand by your group and its places; never leave a member alone in a fight",
     "opportunist": "look after yourself first; switch sides or betray when it pays",
-    "businessman": "earn: jobs, deliveries, trading and your group's stash; avoid trouble",
+    "businessman": "earn and build: work, trade, deals and your group's common goods; "
+    "avoid trouble",
 }
 ALIASES = {
     "agresivo": "aggressive",

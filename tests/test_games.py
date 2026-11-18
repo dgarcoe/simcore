@@ -264,6 +264,9 @@ def test_orders_and_days_in_a_game(tmp_path, monkeypatch):
         ).json()
         assert game["max_players"] == 100
         code = game["code"]
+        opts = ana.get(f"/api/play/{code}").json()["options"]
+        assert opts["territories"] is True
+        assert {a["name"] for a in opts["actions"]} == set(GANGS.get("actions") or {})
         h = {
             "X-Player-Token": ana.post(
                 f"/api/play/{code}/join", json={"display_name": "Ana"}

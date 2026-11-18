@@ -451,6 +451,31 @@ def diary(events: list[dict], name: str, where: str = "") -> list[dict]:
     return out
 
 
+def player_options(scenario: dict | None) -> dict:
+    """What a player may pick from when writing orders, from the scenario itself: its own actions
+    (for red lines), the items everyone can see who carries (prizes to go after) and the words it
+    uses for groups and territories (`environment.global_state.ui_words`)."""
+    cfg = scenario or {}
+    actions = [
+        {"name": name, "description": str((a or {}).get("description") or name)[:120],
+         "target": (a or {}).get("target", "none") == "agent"}
+        for name, a in (cfg.get("actions") or {}).items()
+    ]
+    items = cfg.get("items") or {}
+    prizes = [name for name, item in items.items() if (item or {}).get("visible")]
+    words = ((cfg.get("environment") or {}).get("global_state") or {}).get("ui_words") or {}
+    out: dict = {"actions": actions[:20], "prizes": prizes[:10]}
+    if isinstance(words, dict) and any(k in WORDS for k in words):
+        out["words"] = {k: str(v)[:30] for k, v in words.items() if k in WORDS}
+    places = (cfg.get("environment") or {}).get("locations") or []
+    if any((loc or {}).get("territory") for loc in places):
+        out["territories"] = True
+    return out
+
+
+WORDS = ("group", "groups", "territory", "territories")
+
+
 def private_replay(run: dict, name: str) -> dict:
     """A finished game's replay for one player: everyone's moves, but only their own orders
     (the scenario's and the plans or red lines that fired), and no recorded prompts."""

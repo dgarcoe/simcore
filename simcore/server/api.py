@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from simcore.engine.events import EventType, SimEvent
 from simcore.llm.provider import LLMProvider
 from simcore.server import auth
-from simcore.server.games import GameError, GameStore, check_orders, diary, dm_view, private_replay, where_before
+from simcore.server.games import GameError, GameStore, check_orders, diary, dm_view, player_options, private_replay, where_before
 from simcore.server.scenarios import _dict_to_config
 from simcore.engine.simulation import SimulationEngine
 
@@ -498,7 +498,13 @@ def create_app(engine: SimulationEngine | None = None,
         if game is None:
             raise HTTPException(404, "No hay ninguna partida con ese código.")
         _settle(game)
-        return _games().public_view(game)
+        view = _games().public_view(game)
+        try:
+            scenario = _get_store().get(game["scenario_id"])
+        except Exception:  # noqa: BLE001 — a missing scenario just means no options
+            scenario = None
+        view["options"] = player_options((scenario or {}).get("data"))
+        return view
 
     @app.post("/api/play/{code}/join")
     async def play_join(code: str, request: Request, payload: dict = Body(default={})):

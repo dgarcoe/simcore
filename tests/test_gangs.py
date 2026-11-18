@@ -203,7 +203,7 @@ def test_the_agent_reads_its_orders_first_and_plans_when_they_apply():
     ana = ag(e, "Ana")
     text = asyncio.run(e._orders_prompt(ana, 1))
     assert text.startswith("Your orders from your player (follow them above everything else).")
-    assert "- Style: «sigiloso» — steal, spy and move unseen" in text
+    assert "- Style: «sigiloso» — act unseen" in text
     assert "- What matters most, in order: 1. «ser la leyenda»; 2. «que gane mi banda»." in text
     assert (
         "- Never: attack anyone in your own group." in text and "- Never: leave your group." in text
