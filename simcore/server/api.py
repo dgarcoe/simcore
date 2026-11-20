@@ -680,6 +680,7 @@ def create_app(engine: SimulationEngine | None = None,
                     "health": state.get("health"),
                     "energy": state.get("energy"),
                     "conditions": sorted((state.get("conditions") or {}).keys()),
+                    **({"recovering": agent["recovering"]} if agent.get("recovering") else {}),
                     "resources": state.get("resources") or agent.get("resources") or {},
                 })
             ranking = (data.get("scores") or {}).get("ranking") or []
