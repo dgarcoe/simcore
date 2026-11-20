@@ -642,6 +642,11 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 **({"item": action.item, "amount": action.amount} if action.item else {}),
                 **({"name": action.parameters.get("name"), "success": action.parameters.get("success", True)}
                    if action.type == ActionType.CUSTOM and action.parameters.get("name") else {}),
+                # forced rest (collapsed, recovering) and market trades
+                **({k: v for k, v in action.parameters.items()
+                    if k in ("exhausted", "to", "recovery", "recovering", "left", "why", "price",
+                             "currency")}
+                   if action.type in (ActionType.REST, ActionType.BUY, ActionType.SELL) else {}),
             },
             source=agent.name,
         ))

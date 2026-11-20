@@ -189,3 +189,14 @@ def test_the_exhausted_recover_for_some_turns_and_casualties_name_who_and_how():
     asyncio.run(e._agent_turn(bea, 5))
     assert e._awards.rivals() == {"Ana": {"nemesis": {"agent": "Bea", "times": 1}},
                                   "Bea": {"victim": {"agent": "Ana", "times": 1}}}
+
+
+def test_forced_rests_say_why_in_the_event():
+    e = make(exhaustion_place="Hospital", exhaustion_recovery=1)
+    ana = ag(e, "Ana")
+    ana.state.energy = 0.0
+    asyncio.run(e._agent_turn(ana, 1))
+    asyncio.run(e._agent_turn(ana, 2))
+    rests = [x.data for x in e.events if x.type == EventType.AGENT_ACTION and x.source == "Ana"]
+    assert rests[0]["exhausted"] and rests[0]["to"] == "Hospital" and rests[0]["recovery"] == 1
+    assert rests[1]["recovering"] and rests[1]["left"] == 1 and rests[1]["why"] == "exhaustion"
