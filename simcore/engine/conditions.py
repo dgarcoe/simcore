@@ -175,7 +175,8 @@ class ConditionsMixin:
                             agent.observe(f"I'm no longer {name}.", tick, importance=0.7)
                             await self._condition_event(agent, name, "removed", tick, "it wore off")
             if agent.state.health <= 0:
-                await self.kill(agent, tick, ", ".join(agent.state.conditions) or "illness")
+                await self.kill(agent, tick, ", ".join(agent.state.conditions) or "illness",
+                                how="condition")
 
         # Contagion through being in the same place.
         for name, cond in self.config.conditions.items():
@@ -450,7 +451,7 @@ class ConditionsMixin:
         return name, ""
 
     async def _apply_outcome(self, agent: Agent, out: Outcome, tick: int, cause: str,
-                             taker: Agent | None = None) -> None:
+                             taker: Agent | None = None, how: str = "action") -> None:
         if out.empty or not agent.alive:
             return
         for stat in STATS:
@@ -474,7 +475,8 @@ class ConditionsMixin:
                 await self._transfer(tick, "effect", item, abs(delta), "" if delta > 0 else agent.name,
                                      agent.name if delta > 0 else "", agent.location)
         if out.kill or agent.state.health <= 0:
-            await self.kill(agent, tick, cause)
+            await self.kill(agent, tick, cause, how=how,
+                            by=taker.name if taker is not None and taker is not agent else "")
 
     def _expand_any(self, agent: Agent, items: dict[str, float]) -> dict[str, float]:
         """`"*": -2` loses two items at random among what the agent carries."""

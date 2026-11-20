@@ -40,6 +40,7 @@ class AwardsTracker:
         self.attacked: set[str] = set()  # attacked someone
         self.hit: set[str] = set()  # was hit
         self.moments: dict[str, list[dict]] = defaultdict(list)
+        self.downed: dict[tuple[str, str], int] = defaultdict(int)  # (by, victim) → times
 
     def _moment(self, agent: str, tick: int, importance: float, kind: str, **data) -> None:
         if not agent:
@@ -74,10 +75,14 @@ class AwardsTracker:
                              text=str(d.get("action") or ""), target=target)
         elif kind == EventType.KNOCKOUT:
             self.count["punching_bag"][who] += 1
+            if d.get("by"):
+                self.downed[(str(d["by"]), who)] += 1
             self.hit.add(who)
             self._moment(who, t, 0.6, "was_knocked_out", cause=str(d.get("cause") or ""),
                          place=str(d.get("location") or ""))
         elif kind == EventType.AGENT_DEATH:
+            if d.get("by"):
+                self.downed[(str(d["by"]), who)] += 1
             self._moment(who, t, 1.0, "died", cause=str(d.get("cause") or ""))
         elif kind == EventType.DICE_ROLL:
             if d.get("critical"):
@@ -120,6 +125,15 @@ class AwardsTracker:
         elif kind == EventType.CONDITION_CHANGE:
             if d.get("change") == "transformed":
                 self._moment(who, t, 0.9, "transformed", into=str(d.get("into") or ""))
+
+    def rivals(self) -> dict:
+        """Each agent's nemesis (who downed them most) and favourite victim (whom they downed
+        most)."""
+        out: dict[str, dict] = {}
+        for (by, victim), n in sorted(self.downed.items(), key=lambda x: -x[1]):
+            out.setdefault(victim, {}).setdefault("nemesis", {"agent": by, "times": n})
+            out.setdefault(by, {}).setdefault("victim", {"agent": victim, "times": n})
+        return out
 
     def results(self, everyone: list[str], points: dict[str, int],
                 wealth: dict[str, float] | None = None,

@@ -144,6 +144,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_orders()
         self._init_fuses()
         self._init_economy()
+        self._recovering: dict[str, dict] = {}  # agent → {until, why, place}
         self._offers: list[TradeOffer] = []
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
@@ -329,6 +330,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         await self._scores_at_end(self.clock.current_tick)
         await self._story_at_end(self.clock.current_tick)
         awards, highlights = self.awards()
+        rivals = self._awards.rivals()
         await self.event_bus.emit(SimEvent(
             type=EventType.SIMULATION_END,
             tick=self.clock.current_tick,
@@ -338,7 +340,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                   **({"mvp": self.end_mvp} if self.end_mvp else {}),
                   **({"scores": self.scores_state()} if self.config.scores.achievements else {}),
                   **({"awards": awards} if awards else {}),
-                  **({"highlights": highlights} if highlights else {})},
+                  **({"highlights": highlights} if highlights else {}),
+                  **({"rivals": rivals} if rivals else {})},
         ))
         logger.info(f"Simulation complete. LLM stats: {self.llm.stats}")
 
@@ -463,6 +466,15 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         if controller is not None:
             # Rule-controlled (a zombie, an animal, a crowd): no LLM call.
             action = self._rule_decision(agent, controller)
+        elif self._recovering_left(agent, tick):
+            # Recovering (in hospital after a knockout, or after collapsing): rest, out of play.
+            rec = self._recovering[agent.name]
+            left = self._recovering_left(agent, tick)
+            if rec["why"] == "knockout":
+                agent.state.health = min(1.0, agent.state.health + 0.1)
+            action = Action(type=ActionType.REST,
+                            parameters={"recovering": True, "left": left, "why": rec["why"]},
+                            reasoning="I'm recovering: I can't do anything else yet.")
         elif self.config.exhaustion and agent.state.energy <= EXHAUSTED:
             # Spent: nothing but rest until there is some energy back (no LLM call either).
             params: dict = {"exhausted": True}
@@ -473,6 +485,9 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 agent.state.location = place
                 agent.state.energy = max(agent.state.energy, 0.2)  # rest adds the rest
                 params["to"] = place
+            if self.config.exhaustion_recovery:
+                self._start_recovery(agent, tick, "exhaustion", self.config.exhaustion_recovery)
+                params["recovery"] = self.config.exhaustion_recovery
             action = Action(type=ActionType.REST, parameters=params,
                             reasoning="I'm exhausted: I can't do anything but rest.")
             agent.observe(
@@ -731,6 +746,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                       self._curses_prompt(agent),
                       self._fuses_prompt(agent, tick),
                       self._economy_prompt(agent),
+                      self._recovery_prompt(agent, tick),
                       "" if mute else self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
@@ -832,7 +848,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 if delta < 0:
                     agent.observe(f"I got hurt{f' ({cause})' if cause else ''}.", tick, importance=0.8)
                     if agent.state.health <= 0:
-                        await self.kill(agent, tick, cause)
+                        await self.kill(agent, tick, cause, how="event")
         for spec, changes in effects.items.items():
             await self._apply_item_effect(spec, changes, tick, cause)
         if effects.adjust:
@@ -865,7 +881,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                     await self.add_condition(agent, name, tick, cause)
         for spec in effects.kill:
             for agent in self._resolve_targets(spec):
-                await self.kill(agent, tick, cause)
+                await self.kill(agent, tick, cause, how="event")
         for spec in effects.depart:
             for agent in self._resolve_targets(spec):
                 await self.depart(agent, tick, cause)
@@ -888,13 +904,16 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
     def _witnesses(self, agent: Agent) -> list[Agent]:
         return [a for a in self.living_agents if a.id != agent.id and a.location == agent.location]
 
-    async def kill(self, agent: Agent, tick: int, cause: str = "") -> None:
+    async def kill(self, agent: Agent, tick: int, cause: str = "", by: str = "", how: str = "",
+                   weapon: str = "") -> None:
         """The agent dies: it stops acting and its body stays where it fell. With
-        `society.lethal: false` it is knocked out instead."""
+        `society.lethal: false` it is knocked out instead. `by` (who did it), `how` (attack, fuse,
+        condition, needs, hazard, event, action) and `weapon` go into the event, for the casualty
+        tables."""
         if not agent.alive:
             return
         if not self.config.society.lethal:
-            await self._knock_out(agent, tick, cause)
+            await self._knock_out(agent, tick, cause, by=by, how=how, weapon=weapon)
             return
         agent.state.status = "dead"
         agent.state.health = 0.0
@@ -913,11 +932,45 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         await self._grieve(agent, tick, cause)
         await self.event_bus.emit(SimEvent(
             type=EventType.AGENT_DEATH, tick=tick,
-            data={"agent": agent.name, "id": agent.id, "location": agent.location, "cause": cause},
+            data={"agent": agent.name, "id": agent.id, "location": agent.location, "cause": cause,
+                  **({"by": by} if by else {}), **({"how": how} if how else {}),
+                  **({"weapon": weapon} if weapon else {})},
             source=agent.name,
         ))
 
-    async def _knock_out(self, agent: Agent, tick: int, cause: str = "") -> None:
+    def _start_recovery(self, agent: Agent, tick: int, why: str, turns: int) -> None:
+        self._recovering[agent.name] = {"until": tick + turns, "why": why,
+                                        "place": agent.location}
+
+    def _recovering_left(self, agent: Agent, tick: int) -> int:
+        """Turns the agent still has to spend recovering (0: free)."""
+        rec = self._recovering.get(agent.name)
+        if not rec:
+            return 0
+        if tick > rec["until"] or not agent.alive:
+            self._recovering.pop(agent.name, None)
+            if agent.alive:
+                agent.observe("You are back on your feet.", tick, importance=0.6)
+            return 0
+        return rec["until"] - tick + 1
+
+    def _recovery_prompt(self, agent: Agent, tick: int) -> str:
+        here = []
+        for other in self.living_agents:
+            if other is agent or other.location != agent.location:
+                continue
+            rec = self._recovering.get(other.name)
+            if rec and tick <= rec["until"]:
+                left = rec["until"] - tick + 1
+                why = "knocked out" if rec["why"] == "knockout" else "exhausted"
+                here.append(f"{other.name} ({why}, {left} turn{'s' if left != 1 else ''} left)")
+        if not here:
+            return ""
+        return ("Recovering here, out of play (healing them shortens it): "
+                + "; ".join(here) + ".")
+
+    async def _knock_out(self, agent: Agent, tick: int, cause: str = "", by: str = "",
+                         how: str = "", weapon: str = "") -> None:
         """Instead of dying: drop what falls, get the knockout condition, wake up elsewhere."""
         ko = self.config.society.knockout
         fell_at = agent.location
@@ -932,6 +985,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             agent.state.location = ko.place
         if ko.condition:
             await self.add_condition(agent, ko.condition, tick, cause or "knocked out")
+        if ko.recovery:
+            self._start_recovery(agent, tick, "knockout", ko.recovery)
         why = f" ({cause})" if cause else ""
         agent.observe(f"I was knocked out{why} and woke up in {agent.location}.", tick,
                       importance=0.95)
@@ -939,7 +994,10 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                                    location=fell_at, agents=[agent.name])
         await self.event_bus.emit(SimEvent(
             type=EventType.KNOCKOUT, tick=tick,
-            data={"agent": agent.name, "location": fell_at, "to": agent.location, "cause": cause},
+            data={"agent": agent.name, "location": fell_at, "to": agent.location, "cause": cause,
+                  **({"by": by} if by else {}), **({"how": how} if how else {}),
+                  **({"weapon": weapon} if weapon else {}),
+                  **({"recovery": ko.recovery} if ko.recovery else {})},
             source=agent.name,
         ))
 
@@ -1316,6 +1374,10 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         search = self._search_state(agent)
         if search:
             data["search"] = search
+        rec = self._recovering.get(agent.name)
+        if rec and agent.alive and self.clock.current_tick <= rec["until"]:
+            data["recovering"] = {"left": rec["until"] - self.clock.current_tick + 1,
+                                  "why": rec["why"]}
         found = self._mind(agent)
         if found:
             name, mind = found

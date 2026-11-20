@@ -66,7 +66,7 @@ class WorldMixin:
                         _clamp_stat(agent, stat, delta)
             if agent.state.health <= 0:
                 label = ", ".join(n for n, v in agent.state.needs.items() if v >= CRITICAL) or "exhaustion"
-                await self.kill(agent, tick, label)
+                await self.kill(agent, tick, label, how="needs")
 
     async def _relieve(self, agent: Agent, name: str, tick: int, why: str) -> None:
         need = self.config.needs[name]
@@ -142,7 +142,7 @@ class WorldMixin:
                 if hz.condition:
                     await self.add_condition(agent, hz.condition, tick, hz.label or place.name)
                 if agent.state.health <= 0:
-                    await self.kill(agent, tick, hz.label or f"danger at {place.name}")
+                    await self.kill(agent, tick, hz.label or f"danger at {place.name}", how="hazard")
 
     async def _change_place(self, name: str, change: dict, tick: int, cause: str) -> None:
         place = self.environment.get_location(name)

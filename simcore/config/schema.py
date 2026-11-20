@@ -389,6 +389,8 @@ class KnockoutConfig(BaseModel):
     condition: str = ""  # given while they recover (e.g. noqueado, with a duration)
     place: str = ""  # where they wake up (a hospital); empty = where they fell
     health: float = Field(0.3, gt=0.0, le=1.0)  # health they wake up with
+    # turns they stay there recovering (they only rest, out of play); being healed shortens it
+    recovery: int = Field(0, ge=0)
 
 
 class FistsConfig(BaseModel):
@@ -737,6 +739,7 @@ class SimulationConfig(BaseModel):
     # where a collapsed agent wakes up (a hospital, home), with half its energy back;
     # empty = it rests where it fell
     exhaustion_place: str = ""
+    exhaustion_recovery: int = Field(0, ge=0)  # more turns a collapsed agent spends recovering
     economy: EconomyConfig = Field(default_factory=lambda: EconomyConfig())
     # Role-playing rules: attributes, skills, d20 checks, experience and levels.
     rpg: bool = False

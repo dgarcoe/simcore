@@ -6,7 +6,7 @@ import json
 import pytest
 
 from simcore.agents.actions import Action, ActionType
-from simcore.config.schema import SimulationConfig
+from simcore.config.schema import ItemConfig, SimulationConfig
 from simcore.engine.events import EventType
 from simcore.engine.simulation import SimulationEngine
 
@@ -131,3 +131,61 @@ def test_items_help_the_dice():
     asyncio.run(e._check(ana, "dexterity", "sleight_of_hand", dc=10, label="robar", tick=1))
     assert rolls[-1]["item_bonus"] == 2 and rolls[-1]["items"] == ["ganzua"]
     assert "helps your rolls: sleight of hand +2, robar +1, defense +5" in e._item_guide({"ganzua"})
+
+
+def test_a_knocked_out_agent_stays_in_hospital_recovering_and_a_healer_shortens_it():
+    e = make(society={"lethal": False,
+                      "knockout": {"place": "Hospital", "health": 0.4, "recovery": 2},
+                      "fists": {"damage": 1.0, "chance": 1.0}})
+    ana, bea = ag(e, "Ana"), ag(e, "Bea")
+    asked = []
+
+    async def decide(*_):
+        asked.append(1)
+        return Action(type=ActionType.ATTACK, target="Bea")
+
+    e.llm.decide = decide
+    done = asyncio.run(e._agent_turn(ana, 1))
+    assert done.parameters["knocked_out"] and bea.location == "Hospital"
+    ko = [x.data for x in e.events if x.type == EventType.KNOCKOUT][0]
+    assert ko["by"] == "Ana" and ko["how"] == "attack" and ko["recovery"] == 2
+    asked.clear()
+    e.clock.current_tick = 2
+    turn = asyncio.run(e._agent_turn(bea, 2))
+    assert turn.type == ActionType.REST and turn.parameters["left"] == 2 and asked == []
+    assert bea.location == "Hospital" and bea.state.health > 0.4
+    assert e._agent_state(bea)["recovering"] == {"left": 2, "why": "knockout"}
+    carla = ag(e, "Carla")
+    carla.state.location = "Hospital"
+    assert "Bea (knocked out, 2 turns left)" in e._recovery_prompt(carla, 2)
+    # a nurse tends to her: one turn less
+    carla.state.resources["botiquin"] = 1
+    e.config.items["botiquin"] = ItemConfig(on_use={"health": 0.2})
+    healed = asyncio.run(e._apply_heal(carla, Action(type=ActionType.HEAL, target="Bea"), 2))
+    assert healed.parameters.get("shortened")
+    e.clock.current_tick = 3
+    assert asyncio.run(e._agent_turn(bea, 3)).parameters.get("recovering") is None
+    assert asked  # back on her feet, deciding again
+
+
+def test_the_exhausted_recover_for_some_turns_and_casualties_name_who_and_how():
+    e = make(exhaustion_place="Hospital", exhaustion_recovery=1,
+             society={"lethal": False, "fists": {"damage": 1.0, "chance": 1.0}})
+    ana = ag(e, "Ana")
+    ana.state.energy = 0.0
+    first = asyncio.run(e._agent_turn(ana, 1))
+    assert first.parameters["exhausted"] and first.parameters["recovery"] == 1
+    second = asyncio.run(e._agent_turn(ana, 2))
+    assert second.parameters["recovering"] and second.parameters["why"] == "exhaustion"
+    # rivals: who downed whom
+    bea = ag(e, "Bea")
+
+    async def decide(*_):
+        return Action(type=ActionType.ATTACK, target="Ana")
+
+    e.llm.decide = decide
+    ana.state.location = bea.location = "Plaza"
+    e._recovering.clear()
+    asyncio.run(e._agent_turn(bea, 5))
+    assert e._awards.rivals() == {"Ana": {"nemesis": {"agent": "Bea", "times": 1}},
+                                  "Bea": {"victim": {"agent": "Ana", "times": 1}}}

@@ -70,6 +70,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `pause_each_day` | bool | false | Pause at the end of each day (an `intermission` event); games with players use it so players read their day and change their agent's orders before the DM resumes |
 | `exhaustion` | bool | true | An agent whose energy is spent (≤ 0.02) can only rest: it collapses and rests that turn without asking the LLM (+0.3 energy). Energy drains a little every tick, more when working or fighting; its prompt warns it below 0.15. `false`: only the warning |
 | `exhaustion_place` | string | `""` | Where a collapsed agent is carried to recover (a hospital, home): it wakes up there with half its energy. Empty: it rests where it fell |
+| `exhaustion_recovery` | int ≥ 0 | 0 | More turns a collapsed agent spends recovering (resting, out of play, like `knockout.recovery`) |
 | `plan_every` | int ≥ 1 | 8 | Ticks between plans |
 | `story` | bool | false | A narrator writes a chapter every `chapter_every` ticks (one LLM call each) |
 | `chapter_every` | int ≥ 1 | 24 | Ticks per chapter |
@@ -561,7 +562,7 @@ routines:
 |---|---|---|---|
 | `spontaneous_groups` | bool | true | Agents may found groups of their own |
 | `lethal` | bool | true | false: nobody dies; whoever would die is knocked out (`knockout`): wakes up with `knockout.health`, at `knockout.place` (a hospital) if set, with `knockout.condition` if set, dropping what `drops` |
-| `knockout` | `{condition, place, health}` | `{}` | See `lethal` |
+| `knockout` | `{condition, place, health, recovery}` | `{}` | See `lethal`. `recovery`: turns they then stay there recovering, out of play: they only rest (no LLM call), get +0.1 health a turn, don't hold territories, and others there see it; being healed by someone shortens it by a turn |
 | `fists` | `{damage, chance}` | `{damage: 0.1, chance: 0.6}` | An attack without a weapon: health it takes and chance of landing it |
 | `group_perks` | bool | true | Belonging pays: each member here adds +1 (up to +2) to rolls and defense (+5% to plain chances), members turn against whoever attacks one of them, and each group has a common stash (`give`/`take` with the group's name as target, from anywhere) |
 | `healers` | list | médic, medic, enfermer, nurse, sanitari, veterinari, doctor, paramedic | Professions (substring) that can `heal` without an item |

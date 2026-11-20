@@ -138,6 +138,9 @@ class Action:
                     f" for {(self.parameters or {}).get('price')} {(self.parameters or {}).get('currency')}"
                     if (self.parameters or {}).get("price") else "")
             case ActionType.REST:
+                if (self.parameters or {}).get("recovering"):
+                    left = (self.parameters or {}).get("left", 1)
+                    return f"recovers ({left} turn{'s' if left != 1 else ''} left)"
                 if (self.parameters or {}).get("exhausted"):
                     to = (self.parameters or {}).get("to")
                     return f"collapses from exhaustion and wakes up in {to}" if to else \

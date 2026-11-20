@@ -626,6 +626,9 @@ def create_app(engine: SimulationEngine | None = None,
             mine = (meta.get("highlights") or {}).get(name)
             if mine:
                 out["highlights"] = mine
+            rival = (meta.get("rivals") or {}).get(name)
+            if rival:
+                out["rivals"] = rival
             scores = meta.get("scores") or {}
             ranking = [r["agent"] for r in scores.get("ranking", [])]
             mine = next((r["points"] for r in scores.get("ranking", [])

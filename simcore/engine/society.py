@@ -414,7 +414,8 @@ class SocietyMixin:
         await self._on_harm(agent, victim, tick, "attacked")
         await self._mark_rivals(agent.name, victim.name, tick)
         if hit and victim.state.health <= 0:
-            await self.kill(victim, tick, f"{agent.name}{with_what}")
+            await self.kill(victim, tick, f"{agent.name}{with_what}", by=agent.name,
+                            how="attack", weapon=item)
             params["killed" if not victim.alive else "knocked_out"] = True
             await self._score_knockout(agent, tick)
             if threat:
@@ -515,6 +516,11 @@ class SocietyMixin:
             "healed": round(patient.state.health - before, 2),
             "with": item or "care",
         }
+        rec = self._recovering.get(patient.name)
+        if rec and patient is not agent and tick <= rec["until"]:
+            rec["until"] -= 1  # tended to: one turn less in bed
+            action.parameters["shortened"] = True
+            patient.observe(f"{agent.name} took care of me: I'll be up sooner.", tick, importance=0.6)
         return action
 
     def _is_healer(self, agent: Agent) -> bool:

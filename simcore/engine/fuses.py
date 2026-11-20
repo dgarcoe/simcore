@@ -98,12 +98,14 @@ class FusesMixin:
         text = (fuse.message or "{item} goes off in {place}").format(item=item, place=place)
         hurt = []
         if carrier is not None and carrier.alive:
-            await self._apply_outcome(carrier, fuse.on_holder, tick, f"{item} went off in hand")
+            await self._apply_outcome(carrier, fuse.on_holder, tick, f"{item} went off in hand",
+                                      how="fuse")
             hurt.append(carrier.name)
         if not fuse.on_others.empty:
             for other in others:
                 if other.alive:
-                    await self._apply_outcome(other, fuse.on_others, tick, f"{item} went off")
+                    await self._apply_outcome(other, fuse.on_others, tick, f"{item} went off",
+                                              how="fuse")
                     hurt.append(other.name)
         for agent in here:
             agent.observe(f"{text}!" + (" It was in my hands." if agent is carrier else ""), tick,

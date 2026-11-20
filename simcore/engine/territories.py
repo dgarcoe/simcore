@@ -43,6 +43,9 @@ class TerritoriesMixin:
         for agent in self.living_agents:
             if agent.location != place or (ko and ko in agent.state.conditions):
                 continue
+            if getattr(self, "_recovering", {}).get(agent.name) and \
+                    self.clock.current_tick <= self._recovering[agent.name]["until"]:
+                continue  # in bed: doesn't hold anything
             group = self._faction_of(agent.name)
             if group:
                 out.setdefault(group, []).append(agent)
