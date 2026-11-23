@@ -61,6 +61,8 @@ class TradeOffer:
     expires: int  # last tick it can be answered
 
     def describe(self, seller: str, buyer: str) -> str:
+        if not self.item:  # a spoken demand: only asks
+            return f"{seller} asks {buyer} for {fmt_amount(self.ask_amount)} {self.ask_item}"
         ask = f" for {fmt_amount(self.ask_amount)} {self.ask_item}" if self.ask_item else " as a gift"
         return f"{seller} offers {buyer} {fmt_amount(self.amount)} {self.item}{ask}"
 
@@ -146,6 +148,7 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         self._init_economy()
         self._recovering: dict[str, dict] = {}  # agent → {until, why, place}
         self._offers: list[TradeOffer] = []
+        self._cut_short: set[str] = set()  # agents whose last answer hit the token limit
         self.tick_delay = tick_delay  # seconds between ticks for visualization
 
         if demo_mode:
@@ -518,6 +521,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 from simcore.llm.prompts import language_directive
                 persona_prompt = f"{persona_prompt}\n\n{language_directive(lang)}"
             action = await self.llm.decide(persona_prompt, prompt)
+            if (action.parameters or {}).pop("truncated", False):
+                self._cut_short.add(agent.name)
             if self.config.llm.record_prompts:
                 await self.event_bus.emit(SimEvent(
                     type=EventType.DECISION_TRACE,
@@ -586,7 +591,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             action = self._check_speech(agent, action)
             if action.type != ActionType.WAIT:
                 self._record_speech(agent, action, tick)
-                await self._speech_roll(agent, action, self._addressees(agent, action), tick)
+                deal = await self._speech_deal(agent, action, tick)
+                await self._speech_roll(agent, action, self._addressees(agent, action), tick, deal)
                 self._search_answered(agent, list(action.parameters.get("targets") or []))
 
         agent.apply_action(action, tick)
@@ -639,7 +645,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                 **({"step": action.parameters.get("step", ""), "place": action.parameters.get("place", ""),
                     "from": action.parameters.get("from", "")}
                    if action.type == ActionType.FIND else {}),
-                **({"item": action.item, "amount": action.amount} if action.item else {}),
+                **({"item": action.item, "amount": action.amount} if action.item and action.type not in (
+                    ActionType.SPEAK, ActionType.WHISPER, ActionType.INTERACT) else {}),
                 **({"name": action.parameters.get("name"), "success": action.parameters.get("success", True)}
                    if action.type == ActionType.CUSTOM and action.parameters.get("name") else {}),
                 # forced rest (collapsed, recovering) and market trades
@@ -647,9 +654,16 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                     if k in ("exhausted", "to", "recovery", "recovering", "left", "why", "price",
                              "currency")}
                    if action.type in (ActionType.REST, ActionType.BUY, ActionType.SELL) else {}),
+                # speech: a deal put into words and what the dice did with it
+                **({k: v for k, v in action.parameters.items()
+                    if k in ("deal", "deal_refused", "speech_effect")}
+                   if action.type in (ActionType.SPEAK, ActionType.WHISPER, ActionType.INTERACT)
+                   else {}),
+                **({"truncated": True} if agent.name in self._cut_short else {}),
             },
             source=agent.name,
         ))
+        self._cut_short.discard(agent.name)
 
         return action
 
@@ -752,6 +766,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
                       self._fuses_prompt(agent, tick),
                       self._economy_prompt(agent),
                       self._recovery_prompt(agent, tick),
+                      self._rule_driven_prompt(agent),
+                      self._endgame_prompt(agent, tick),
                       "" if mute else self._conversation_prompt(agent, tick)):
             if extra:
                 observation += "\n" + extra
@@ -1082,7 +1098,8 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
 
     async def _refuse(self, agent: Agent, action: Action, tick: int, why: str) -> Action:
         agent.observe(f"I tried to {action.describe()} but couldn't: {why}.", tick, importance=0.5)
-        return Action(type=ActionType.WAIT, reasoning=f"Couldn't {action.describe()}: {why}. {action.reasoning}".strip())
+        return Action(type=ActionType.WAIT,
+                      reasoning=f"Couldn't do it ({action.describe()}): {why}. {action.reasoning}".strip())
 
     async def _stash_action(self, agent: Agent, action: Action, stash: dict, tick: int) -> Action:
         """Give to or take from the agent's group's common stash."""
@@ -1249,24 +1266,37 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
         seller = self._find_agent_by_name(action.target)
         offer = next((o for o in self._offers if seller and o.seller == seller.id and o.buyer == agent.id), None)
         if not offer:
-            return await self._refuse(agent, action, tick, f"{action.target or 'nobody'} has no offer for me")
+            return await self._refuse(
+                agent, action, tick,
+                f"{action.target or 'nobody'} has no offer for me (words alone are not an offer: "
+                f"only those under \"Offers waiting for your answer\" can be accepted or declined)")
         self._offers.remove(offer)
         if kind == ActionType.DECLINE:
             seller.observe(f"{agent.name} declined my offer.", tick, importance=0.6)
             await self._trade_result(offer, False, "declined", tick)
             return action
+        why = await self._close_deal(agent, seller, offer, tick)
+        if why:
+            return await self._refuse(agent, action, tick, why)
+        return action
+
+    async def _close_deal(self, agent: Agent, seller: Agent, offer: TradeOffer, tick: int) -> str:
+        """`agent` takes `seller`'s offer: the items change hands. Returns why not, or ""."""
+        inv = agent.state.resources
         if seller.location != agent.location or not seller.alive:
             await self._trade_result(offer, False, "not together any more", tick)
-            return await self._refuse(agent, action, tick, f"{seller.name} is not here any more")
-        if not _has(seller.state.resources, offer.item, offer.amount):
+            return f"{seller.name} is not here any more"
+        if offer.item and not _has(seller.state.resources, offer.item, offer.amount):
             await self._trade_result(offer, False, f"{seller.name} no longer has it", tick)
-            return await self._refuse(agent, action, tick, f"{seller.name} no longer has {offer.item}")
+            return f"{seller.name} no longer has {offer.item}"
         if offer.ask_item and not _has(inv, offer.ask_item, offer.ask_amount):
             await self._trade_result(offer, False, f"{agent.name} can't pay", tick)
-            return await self._refuse(agent, action, tick, f"I don't have {fmt_amount(offer.ask_amount)} {offer.ask_item}")
-        _add(seller.state.resources, offer.item, -offer.amount)
-        _add(inv, offer.item, offer.amount)
-        await self._transfer(tick, "trade", offer.item, offer.amount, seller.name, agent.name, agent.location)
+            return f"I don't have {fmt_amount(offer.ask_amount)} {offer.ask_item}"
+        if offer.item:
+            _add(seller.state.resources, offer.item, -offer.amount)
+            _add(inv, offer.item, offer.amount)
+            await self._transfer(tick, "trade", offer.item, offer.amount, seller.name, agent.name,
+                                 agent.location)
         if offer.ask_item:
             _add(inv, offer.ask_item, -offer.ask_amount)
             _add(seller.state.resources, offer.ask_item, offer.ask_amount)
@@ -1278,7 +1308,52 @@ class SimulationEngine(ConditionsMixin, WorldMixin, MindsMixin, ConversationsMix
             type=ActionType.TRADE, target=agent.name,
             content=offer.describe(seller.name, agent.name)), tick)
         await self._trade_result(offer, True, "", tick)
-        return action
+        return ""
+
+    async def _speech_deal(self, agent: Agent, action: Action, tick: int) -> TradeOffer | None:
+        """A deal put into words (speak/whisper with "item" and/or "ask_item"): the first person
+        spoken to gets a real offer to accept or decline, as with "trade"."""
+        if not (action.item or action.ask_item):
+            return None
+        listeners = [a for a in self._addressees(agent, action) if self._controller(a) is None]
+        if not listeners:
+            return None
+        other = listeners[0]
+        inv = agent.state.resources
+        texts = (action.content, action.reasoning)
+        item = self._resolve_item(action.item, inv, texts) if action.item else ""
+        ask = self._resolve_item(action.ask_item, {}, ()) if action.ask_item else ""
+        if ask == item:
+            ask = ""
+        why = ""
+        if item and not _has(inv, item, action.amount):
+            why = f"I don't have {fmt_amount(action.amount)} {item}"
+        elif item and self._curse_holds(agent, item):
+            why = CURSED.format(item=item)
+        elif not item and not ask:
+            why = "nothing to exchange"
+        if why:
+            agent.observe(f"My words offered {item or 'a deal'} to {other.name}, but no real offer "
+                          f"was made: {why}.", tick, importance=0.5)
+            action.parameters = {**(action.parameters or {}), "deal_refused": why}
+            return None
+        offer = TradeOffer(agent.id, other.id, item, action.amount if item else 0, ask,
+                           action.ask_amount if ask else 0, expires=tick + 2)
+        self._offers = [o for o in self._offers if not (o.seller == agent.id and o.buyer == other.id)]
+        self._offers.append(offer)
+        other.observe(offer.describe(agent.name, "me") + " (accept or decline it).", tick,
+                      importance=0.7)
+        action.parameters = {**(action.parameters or {}), "deal": {
+            "to": other.name, "item": item, "amount": offer.amount, "ask_item": ask,
+            "ask_amount": offer.ask_amount}}
+        await self.event_bus.emit(SimEvent(
+            type=EventType.TRADE_OFFER, tick=tick,
+            data={"from": agent.name, "to": other.name, "item": item, "amount": offer.amount,
+                  "ask_item": ask, "ask_amount": offer.ask_amount, "expires": offer.expires,
+                  "spoken": True},
+            source=agent.name,
+        ))
+        return offer
 
     async def _trade_result(self, offer: TradeOffer, accepted: bool, reason: str, tick: int) -> None:
         await self.event_bus.emit(SimEvent(

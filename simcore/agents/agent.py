@@ -190,10 +190,10 @@ Decide your next action. Respond in this exact JSON format:
 {{
     "action": "{actions}",
     "target": "<see target rules below>",
-    "content": "<what you say or do>",
-    "item": "<item name, only for give/take/drop/use/trade>",
+    "content": "<what you say or do: at most 2-3 short sentences>",
+    "item": "<item name, for give/take/drop/use/trade, or what you offer in a speak/whisper deal>",
     "amount": 1,
-    "ask_item": "<only for trade: what you want in return>",
+    "ask_item": "<for trade or a speak/whisper deal: what you want in return>",
     "ask_amount": 1,
     "share": "<optional, with speak/interact: something you believe or a secret you decide to tell them>",
     "place": "<only for invite: where to meet; empty = a quiet place>",
@@ -202,7 +202,7 @@ Decide your next action. Respond in this exact JSON format:
     "emotion": "<optional: how you feel now, e.g. calm, afraid, angry, sad, happy, hopeful>",
     "intent": "<optional, with speak/whisper: persuade, deceive or intimidate>",
     "plan_step_done": false,
-    "reasoning": "<brief internal thought>"
+    "reasoning": "<one or two short sentences>"
 }}
 
 Item rules:
@@ -210,7 +210,8 @@ Item rules:
 - "take": pick up an item listed under "Items you can take here". "drop": leave one of yours here.
 - "use": use an item from your inventory on yourself (empty target) or on a person here (e.g. medicine to heal them).
 - "trade": offer "item" x "amount" to "target" in exchange for "ask_item" x "ask_amount". They answer later.
-- "accept" / "decline": answer an offer made to you; "target" is the person who made it.
+- "accept" / "decline": answer an offer listed under "Offers waiting for your answer"; "target" is the person who made it. Words someone said are not an offer.
+- Promises in words never move anything by themselves. To make a deal while you talk, add "item"/"amount" (what you give, if anything) and "ask_item"/"ask_amount" (what you want) to your speak/whisper: the first person you address gets a real offer to accept. Only offer what you actually carry.
 - Only use item names you actually have or that are available here.
 - "Special actions" listed in your situation belong to this story: put the name exactly as written in "action" and, if it says "target", one of the people it names in "target".
 

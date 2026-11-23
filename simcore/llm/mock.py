@@ -294,8 +294,13 @@ class MockLLMProvider:
                 content=self._rng.choice(phrases),
                 reasoning=f"I want to socialize with {target}",
             )
-            if "Your odds (dice decide)" in user_prompt and self._rng.random() < 0.2:
+            if "(dice decide)" in user_prompt and self._rng.random() < 0.2:
                 action.intent = self._rng.choice(["persuade", "persuade", "deceive", "intimidate"])
+                held = _items_after(user_prompt, "Your inventory: ")
+                if held and target != "everyone" and self._rng.random() < 0.5:
+                    # a deal put into words: something of mine for their goodwill
+                    action.item = self._rng.choice(sorted(held))
+                    action.content = f"{target}, take this {action.item} and you'll see I'm on your side."
             return self._maybe_share(action, user_prompt)
 
         # Do business with nearby people (real exchanges of items are decided above)

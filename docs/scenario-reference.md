@@ -86,7 +86,7 @@ Only `simulation`, `environment` and `agents` are needed; everything else is opt
 | `reflection_model` | text | none | Cheaper/bigger model for reflections and the narrator |
 | `cache` | bool | true | Cache answers by prompt (set false for more variety) |
 | `temperature` | float | 0.7 | |
-| `max_tokens` | int | 500 | |
+| `max_tokens` | int | 500 | Answers cut off at this limit are flagged (`truncated` on the action event); raise it for long speeches |
 | `frequency_penalty` | float | 0 | 0.5–1.5 helps small local models repeat less |
 | `num_ctx` | int ≥ 0 | 8192 | Ollama only: context window in tokens. Ollama's default (2048–4096) cuts long prompts from the start; 0 keeps it |
 | `record_prompts` | bool | false | Keep each decision's prompt and raw answer in the run's recording (`decision_trace` events, not sent live) to see in the replay why an agent did something. Big: for debugging |
@@ -585,10 +585,19 @@ With these, the engine runs on its own:
 - memories and reflections;
 - noticing when someone ignores you;
 - beliefs passed on in conversation, lies and rumors;
+- deals put into words: a `speak`/`whisper` with `item`/`amount` (what is given) and/or
+  `ask_item`/`ask_amount` (what is wanted) makes the first person addressed a real offer, which they
+  `accept` or `decline` like a `trade`. Words alone never move items;
+- rule-driven agents (`controller: rules`, e.g. police) can't be spoken to: agents are told so;
+- in the last day (or last sixth of a short run) agents are told how many turns are left and
+  what still counts;
 - with `rpg`:
   - attacks roll against the target's defense (10 + DEX + armor);
   - heals roll WIS (medicine);
-  - `intent: persuade | deceive | intimidate` when speaking is an opposed roll;
+  - `intent: persuade | deceive | intimidate` when speaking is one opposed roll against the first
+    person addressed (XP only the first win of the day against each person). Winning makes them
+    take the deal put into words; an intimidated person with no deal on the table runs to another
+    place; a failed threat makes them angry;
   - experience and levels.
 
 Do not recreate these as scenario actions. Add scenario actions only for things specific to the

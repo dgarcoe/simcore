@@ -148,6 +148,7 @@ class RpgMixin:
     def _init_rpg(self) -> None:
         self._sheets: dict[str, dict] = {}
         self._caught_lying: dict[tuple[str, str], int] = {}
+        self._talk_xp: set[tuple[str, str, int]] = set()  # (speaker, listener, day) that gave XP
 
     @property
     def rpg(self) -> bool:
@@ -210,6 +211,7 @@ class RpgMixin:
         target: str = "",
         extra: int = 0,
         tick: int = 0,
+        xp: bool = True,
     ) -> dict:
         """d20 + modifiers against a difficulty or another agent's roll. Emits dice_roll."""
         sheet = self._sheet(agent)
@@ -259,7 +261,7 @@ class RpgMixin:
         await self.event_bus.emit(
             SimEvent(type=EventType.DICE_ROLL, tick=tick, data=result, source=agent.name)
         )
-        if success:
+        if success and xp:
             gain = 10 + max(
                 0, (result.get("dc") or (result.get("against") or {}).get("total", 10)) - 10
             )
@@ -348,9 +350,15 @@ class RpgMixin:
         )
         return res["success"]
 
-    async def _speech_roll(self, agent: Agent, action, listeners: list[Agent], tick: int) -> None:
-        """persuade / deceive / intimidate someone: an opposed check against their insight."""
+    async def _speech_roll(self, agent: Agent, action, listeners: list[Agent], tick: int,
+                           deal=None) -> None:
+        """persuade / deceive / intimidate: one opposed check (against the insight of the first
+        person spoken to) per line. It has teeth: winning makes them take the deal put into words
+        (an intimidated one with no deal on the table leaves the place); a failed threat angers.
+        XP only the first time a day against each person, so talking in circles doesn't level up."""
         intent = (action.intent or "").strip().lower()
+        # rule-driven people (police, zombies…) don't listen
+        listeners = [o for o in listeners if self._controller(o) is None]
         if not self.rpg or intent not in INTENTS or not listeners:
             return
         attribute, skill = INTENTS[intent]
@@ -360,45 +368,97 @@ class RpgMixin:
             > self._sheet(agent)["attributes"]["charisma"]
         ):
             attribute = "strength"
-        for other in listeners:
-            res = await self._check(
-                agent,
-                attribute,
-                skill,
-                against=(other, "wisdom", "insight"),
-                label=intent,
-                target=other.name,
-                tick=tick,
+        other = listeners[0]
+        if deal is not None:
+            other = next((o for o in listeners if o.id == deal.buyer), other)
+        day = tick * self.clock.tick_duration_minutes // 1440
+        first = (agent.name, other.name, day) not in self._talk_xp
+        res = await self._check(
+            agent,
+            attribute,
+            skill,
+            against=(other, "wisdom", "insight"),
+            label=intent,
+            target=other.name,
+            tick=tick,
+            xp=first,
+        )
+        ok = res["success"]
+        if ok:
+            self._talk_xp.add((agent.name, other.name, day))
+        effect = ""
+        if intent == "persuade":
+            other.observe(
+                f"{agent.name} {'convinced me' if ok else 'tried to convince me, without success'}: "
+                f'"{action.content}"',
+                tick,
+                importance=0.7 if ok else 0.4,
             )
-            ok = res["success"]
-            if intent == "persuade":
-                other.observe(
-                    f"{agent.name} {'convinced me' if ok else 'tried to convince me, without success'}: "
-                    f'"{action.content}"',
-                    tick,
-                    importance=0.7 if ok else 0.4,
-                )
-                other.memory.update_relationship(
-                    agent.name, 0.1 if ok else 0.0, tick, "persuaded me" if ok else ""
-                )
-            elif intent == "intimidate":
-                other.observe(
-                    f"{agent.name} {'intimidated me' if ok else 'tried to intimidate me; I am not afraid'}: "
-                    f'"{action.content}"',
-                    tick,
-                    importance=0.8 if ok else 0.5,
-                )
-                other.memory.update_relationship(
-                    agent.name, -0.2 if ok else -0.1, tick, "threatened me"
-                )
-                if ok:
-                    self._feel(other, "afraid", agent.name, tick)
-            elif not ok:  # deceive, caught
-                self._caught_lying[(agent.name, other.name)] = tick
-                other.observe(f"I could tell {agent.name} was lying to me.", tick, importance=0.8)
-                other.memory.update_relationship(agent.name, -0.3, tick, "lied to me")
-                if any(w is not other for w in self._witnesses(agent)):
-                    self._rep(agent.name, -0.1)
+            other.memory.update_relationship(
+                agent.name, 0.1 if ok else 0.0, tick, "persuaded me" if ok else ""
+            )
+        elif intent == "intimidate":
+            other.observe(
+                f"{agent.name} {'intimidated me' if ok else 'tried to intimidate me; I am not afraid, I am angry'}: "
+                f'"{action.content}"',
+                tick,
+                importance=0.8 if ok else 0.6,
+            )
+            other.memory.update_relationship(
+                agent.name, -0.2 if ok else -0.25, tick, "threatened me"
+            )
+            self._feel(other, "afraid" if ok else "angry", agent.name, tick)
+            if not ok:
+                effect = "angered"
+        elif not ok:  # deceive, caught
+            self._caught_lying[(agent.name, other.name)] = tick
+            other.observe(f"I could tell {agent.name} was lying to me.", tick, importance=0.8)
+            other.memory.update_relationship(agent.name, -0.3, tick, "lied to me")
+            if any(w is not other for w in self._witnesses(agent)):
+                self._rep(agent.name, -0.1)
+        if ok and deal is not None and deal in self._offers:
+            self._offers.remove(deal)
+            why = await self._close_deal(other, agent, deal, tick)
+            if why:
+                other.observe(f"{agent.name} won me over, but the deal fell through: {why}.",
+                              tick, importance=0.6)
+                effect = "deal_failed"
+            else:
+                other.observe(f"{agent.name} won me over: I took the deal "
+                              f"({deal.describe(agent.name, 'me')}).", tick, importance=0.8)
+                agent.observe(f"{other.name} took my deal.", tick, importance=0.7)
+                effect = "deal"
+        elif ok and intent == "intimidate":
+            if await self._flee(other, agent, tick):
+                effect = "fled"
+        if effect:
+            action.parameters = {**(action.parameters or {}),
+                                 "speech_effect": {"effect": effect, "target": other.name,
+                                                   "intent": intent}}
+
+    async def _flee(self, agent: Agent, frightener: Agent, tick: int) -> bool:
+        """`agent` runs away from `frightener` to another place."""
+        here = agent.location
+        if hasattr(self, "_recovering") and agent.name in self._recovering:
+            return False
+        places = [n for n in self.environment.get_location_names() if n != here]
+        if not places:
+            return False
+        safe = [p for p in places
+                if not any(a.location == p and a.name == frightener.name for a in self.living_agents)]
+        dest = self._rng.choice(safe or places)
+        agent.state.location = dest
+        self._note_move(agent, here, dest, tick)
+        agent.observe(f"I ran away from {frightener.name} to {dest}.", tick, importance=0.8)
+        frightener.observe(f"{agent.name} ran away from me.", tick, importance=0.6)
+        await self.event_bus.emit(SimEvent(
+            type=EventType.AGENT_MOVE, tick=tick,
+            data={"action": f"moves to {dest}", "reasoning": f"Fled from {frightener.name}",
+                  "action_type": "move", "target": dest, "location": dest, "content": "",
+                  "fled": frightener.name, "from": here},
+            source=agent.name,
+        ))
+        return True
 
     def _caught(self, speaker: str, listener: str, tick: int) -> bool:
         return self._caught_lying.get((speaker, listener)) == tick
@@ -491,10 +551,18 @@ class RpgMixin:
         heal = self._chance(agent, "wisdom", "medicine", 10)
         talk = self._chance(agent, "charisma", "persuasion", 12)
         lies = self._chance(agent, "charisma", "deception", 12)
+        a_ = self._sheet(agent)["attributes"]
+        scare = self._chance(
+            agent, "strength" if a_["strength"] > a_["charisma"] else "charisma", "intimidation", 12)
         lines.append(
-            f"Your odds (dice decide): attack ≈ {hit:.0%}{f' (with your {item})' if item else ''}, "
-            f"heal ≈ {heal:.0%}, persuade someone ≈ {talk:.0%}, deceive ≈ {lies:.0%}. "
-            'When you speak to change someone\'s mind, add "intent": persuade, deceive or intimidate.'
+            f"Your odds against an average person (dice decide): attack ≈ {hit:.0%}"
+            f"{f' (with your {item})' if item else ''}, heal ≈ {heal:.0%}, persuade ≈ {talk:.0%}, "
+            f"deceive ≈ {lies:.0%}, intimidate ≈ {scare:.0%}. "
+            'Speaking with "intent" (persuade, deceive or intimidate) rolls once, against the first '
+            "person you address. Winning only changes things if a deal is on the table: put it in "
+            '"item"/"amount" (what you give) and "ask_item"/"ask_amount" (what you want) and, if '
+            "you win, they take it at once. Someone you intimidate with no deal runs away; a "
+            "failed threat makes them angry. Without a deal, winning only warms them to you."
         )
         return "\n".join(lines)
 

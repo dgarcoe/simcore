@@ -345,6 +345,9 @@ class LLMProvider:
                     self.cache.set(cache_key, content)
 
                 action.raw = content
+                if getattr(response.choices[0], "finish_reason", None) == "length":
+                    # cut off by max_tokens: what came was rescued, but something is missing
+                    action.parameters = {**(action.parameters or {}), "truncated": True}
                 return action
 
             except Exception as e:

@@ -206,7 +206,7 @@ class OrdersMixin:
         return Action(
             type=ActionType.WAIT,
             reasoning=(
-                f"Couldn't {action.describe()}: it is a red line my player set "
+                f"Couldn't do it ({action.describe()}): it is a red line my player set "
                 f"(never {self._red_line_text(rl)}). {action.reasoning}"
             ).strip(),
         )

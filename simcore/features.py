@@ -32,6 +32,7 @@ FEATURES = [
     "item_bonus",  # items.<x>.bonus: carried items add to dice rolls (or chance)
     "economy",  # locations[].market, buy/sell, prices/markets effects, when.wealth, own_territory
     "recovery",  # knockout.recovery, exhaustion_recovery, by/how on knockouts and deaths, rivals
+    "speech_deals",  # deals put into words, speech rolls with effects (deal, fled, angered), truncated
 ]
 
 

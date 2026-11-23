@@ -109,7 +109,8 @@ class ConversationsMixin:
         """'Ana', 'Ana, Bob', 'Ana y Bob', 'everyone'… → the living people here it names."""
         if not isinstance(target, str) or not target.strip():
             return []
-        here = [a for a in self.living_agents if a.location == agent.location and a.id != agent.id]
+        here = [a for a in self.living_agents if a.location == agent.location and a.id != agent.id
+                and (self._controller(a) is None or self._controller(agent) is not None)]
         if EVERYONE.match(target.strip()):
             return here
         whole = self._find_agent_by_name(target)
@@ -138,6 +139,11 @@ class ConversationsMixin:
             named = self._find_agent_by_name(action.target)
             if named and named.state.status == "dead" and named.location == agent.location:
                 return Action(type=ActionType.WAIT, reasoning=f"{named.name} is dead")
+            if named and named.alive and named.location == agent.location and self._controller(named):
+                why = f"{named.name} is {self._rule_label(named)} and doesn't listen or negotiate"
+                agent.observe(f"Talking to {named.name} is pointless: {why}.", self.clock.current_tick, importance=0.5)
+                return Action(type=ActionType.WAIT,
+                              reasoning=f"Couldn't do it ({action.describe()}): {why}. {action.reasoning}".strip())
             return Action(type=ActionType.WAIT, reasoning="Target not present at this location")
         names = [a.name for a in targets]
         action.target = ", ".join(names)

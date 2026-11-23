@@ -51,6 +51,26 @@ class ConditionsMixin:
                 return cond
         return None
 
+    def _rule_label(self, agent: Agent) -> str:
+        """The name of the rule-driven condition driving this agent ("policia", "zombie"…)."""
+        for name in agent.state.conditions:
+            cond = self._condition(name)
+            if cond and cond.controller == "rules":
+                return name.replace("_", " ")
+        return ""
+
+    def _rule_driven_prompt(self, agent: Agent) -> str:
+        """Who here is driven by rules: talking to them does nothing."""
+        if self._controller(agent) is not None:
+            return ""
+        here = [a for a in self.living_agents
+                if a.location == agent.location and a.id != agent.id and self._controller(a)]
+        if not here:
+            return ""
+        return ("Driven by rules, not people you can talk to (speaking, persuading or offering "
+                "deals to them does nothing): "
+                + ", ".join(f"{a.name} ({self._rule_label(a)})" for a in here) + ".")
+
     def _mind(self, agent: Agent) -> tuple[str, MindConfig] | None:
         """The condition that changed this agent's mind (it still uses the LLM), if any."""
         if self._controller(agent) is not None:
@@ -252,8 +272,9 @@ class ConditionsMixin:
     def _action_odds(self, agent: Agent, act: ActionConfig) -> str:
         """'; success ≈ 65%' (the dice with role-playing rules, else the action's chance)."""
         if act.check and getattr(self, "rpg", False):
-            if act.check.against:
-                return "; opposed roll"
+            if act.check.against:  # against an average person (10 + 1)
+                p = self._chance(agent, act.check.attribute, act.check.skill or "", 12)
+                return f"; opposed roll, ≈ {p:.0%} against an average person"
             p = self._chance(agent, act.check.attribute, act.check.skill or "", act.check.dc)
             return f"; success ≈ {p:.0%}"
         return f"; success ≈ {act.chance:.0%}" if act.chance < 1 else ""

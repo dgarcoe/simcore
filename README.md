@@ -394,7 +394,7 @@ agents:
 - **`attack`:** strength (dexterity for `weapon.ranged`) + athletics against 10 + DEX + `armor` of the items the target carries. A critical does double damage; a fumble wastes ammo or hurts the attacker.
 - **`heal`:** wisdom (medicine), DC 10 with an item and 12 without. A critical heals ×1.5, a failure half, a fumble nothing.
 - **Scenario actions:** `check: {attribute, skill, dc}` or opposed with `against: constitution` replaces `chance`.
-- **Speech with `"intent"`:** persuade, deceive or intimidate, against the listener's insight. A lie that is seen through isn't believed, sours the relationship and, with witnesses, costs reputation.
+- **Speech with `"intent"`:** persuade, deceive or intimidate: one roll against the first listener's insight. Winning makes them take the deal attached to the words (`item`/`ask_item`); an intimidated listener with no deal runs away; a failed threat angers. A lie that is seen through isn't believed, sours the relationship and, with witnesses, costs reputation.
 - **`find`:** when nobody can help, a perception check (DC 12) may find tracks.
 
 **Experience:**

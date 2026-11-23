@@ -182,6 +182,28 @@ class ScoresMixin:
                 if ach.when.alive_at_end and not self._earned_once(agent, name):
                     await self._award(agent, name, ach, tick)
 
+    def _endgame_prompt(self, agent: Agent, tick: int) -> str:
+        """The last stretch (a day, or the last sixth of a short run): what still counts."""
+        left = self.clock.max_ticks - tick
+        day = 1440 // max(1, self.clock.tick_duration_minutes)
+        if left < 0 or left > max(3, min(day, self.clock.max_ticks // 6)):
+            return ""
+        counts = []
+        if self._achievements and self.config.scores.visible:
+            counts.append("your points (see \"Earn\")")
+            if self._group_ranking():
+                counts.append("your group's points")
+        if getattr(self, "_territories", None):
+            counts.append("the places your group holds at the end")
+        economy = getattr(self.config, "economy", None)
+        if economy is not None and getattr(economy, "group_wealth_points", 0):
+            counts.append(f"the {economy.currency} your group has")
+        text = f"The story ends in {left} turn{'s' if left != 1 else ''}."
+        if counts:
+            text += (" What counts at the end: " + ", ".join(counts) + ". Words only count if they "
+                     "close a deal or win someone over; use these last turns on what scores.")
+        return text
+
     def _scores_prompt(self, agent: Agent) -> str:
         if not self._achievements or not self.config.scores.visible:
             return ""

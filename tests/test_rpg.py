@@ -201,7 +201,7 @@ def test_prompt_state_and_parser():
     e = make_engine()
     p = e._build_observation(ag(e, "ortega"), 1)
     assert "Your character: level 1 (0/100 XP). STR 16 (+3), DEX 14 (+2)" in p
-    assert "Your odds (dice decide): attack ≈" in p and "(with your escopeta)" in p
+    assert "Your odds against an average person (dice decide): attack ≈" in p and "(with your escopeta)" in p
     state = next(a for a in e.get_state()["agents"].values() if a["name"] == "Ortega")
     assert state["rpg"]["level"] == 1 and state["rpg"]["proficiency"] == 2
     a = LLMProvider()._parse_action(
@@ -228,3 +228,80 @@ def test_demo_run_rolls_dice():
     e = make_engine()
     asyncio.run(e.run())
     assert rolls(e)
+
+
+def _events(e, kind):
+    return [x.data for x in e.events if x.type == kind]
+
+
+def test_spoken_deal_is_a_real_offer_and_a_won_persuade_closes_it():
+    e = make_engine()
+    ag(e, "ines").state.resources["dinero"] = 3
+    Dice(e, 19, 2)  # Inés wins: Bob takes the deal at once
+    act(e, "ines", 1, type=ActionType.SPEAK, target="Bob", content="Tu chaleco por 3 billetes",
+        intent="persuade", ask_item="chaleco", item="dinero", amount=3)
+    bob, ines = ag(e, "bob"), ag(e, "ines")
+    assert ines.state.resources.get("chaleco") == 1 and bob.state.resources.get("dinero") == 3
+    offer = _events(e, EventType.TRADE_OFFER)[-1]
+    assert offer["spoken"] and offer["to"] == "Bob"
+    said = [x.data for x in e.events if x.type == EventType.AGENT_SPEAK][-1]
+    assert said["deal"]["ask_item"] == "chaleco"
+    assert said["speech_effect"] == {"effect": "deal", "target": "Bob", "intent": "persuade"}
+    assert "item" not in said  # the deal is not mistaken for an item action
+
+
+def test_spoken_deal_without_the_goods_is_no_offer_and_a_lost_roll_leaves_it_pending():
+    e = make_engine()
+    act(e, "ines", 1, type=ActionType.SPEAK, target="Bob", content="Te doy comida",
+        item="comida")
+    said = [x.data for x in e.events if x.type == EventType.AGENT_SPEAK][-1]
+    assert "don't have" in said["deal_refused"] and not e._offers
+    Dice(e, 2, 19)
+    act(e, "ines", 2, type=ActionType.SPEAK, target="Bob", content="Dame tu chaleco",
+        intent="persuade", ask_item="chaleco")
+    assert len(e._offers) == 1 and ag(e, "bob").state.resources.get("chaleco") == 1
+    # Bob can still accept it himself
+    act(e, "bob", 2, type=ActionType.ACCEPT, target="Inés")
+    assert ag(e, "ines").state.resources.get("chaleco") == 1
+
+
+def test_one_roll_per_line_xp_once_a_day_and_intimidation_makes_them_flee_or_angry():
+    e = make_engine()
+    Dice(e, 18, 2)
+    act(e, "ortega", 1, type=ActionType.SPEAK, target="everyone", content="Largo de aquí",
+        intent="intimidate")
+    assert len(rolls(e)) == 1  # one roll, against the first one addressed
+    first = rolls(e)[-1]["against"]["agent"]
+    assert ag(e, first).location == "Granja"
+    moved = [x.data for x in e.events if x.type == EventType.AGENT_MOVE][-1]
+    assert moved["fled"] == "Ortega"
+    xp = e._sheet(ag(e, "ortega"))["xp"]
+    ag(e, first).state.location = "Plaza"
+    Dice(e, 18, 2)
+    act(e, "ortega", 2, type=ActionType.SPEAK, target=first, content="Otra vez", intent="intimidate")
+    assert e._sheet(ag(e, "ortega"))["xp"] == xp  # no XP twice in a day against the same one
+    ag(e, first).state.location = "Plaza"
+    Dice(e, 2, 18)
+    act(e, "ortega", 3, type=ActionType.SPEAK, target=first, content="Vete", intent="intimidate")
+    said = [x.data for x in e.events if x.type == EventType.AGENT_SPEAK][-1]
+    assert said["speech_effect"]["effect"] == "angered"
+    assert e._feelings[first][0] == "angry"
+
+
+def test_rule_driven_people_are_not_spoken_to():
+    e = make_engine()
+    p = e._build_observation(ag(e, "ines"), 1)
+    assert "Zed (zombi)" in p
+    act(e, "ines", 1, type=ActionType.SPEAK, target="Zed", content="Hola", intent="persuade")
+    assert not rolls(e)
+    acted = [x.data for x in e.events if x.source == "Inés"][-1]
+    assert "doesn't listen" in acted["reasoning"]
+    act(e, "ines", 2, type=ActionType.SPEAK, target="everyone", content="Hola a todos")
+    said = [x.data for x in e.events if x.type == EventType.AGENT_SPEAK][-1]
+    assert "Zed" not in said["targets"]
+
+
+def test_endgame_hint_only_at_the_end():
+    e = make_engine()
+    assert e._endgame_prompt(ag(e, "ines"), 1) == ""
+    assert "ends in 3 turns" in e._endgame_prompt(ag(e, "ines"), e.clock.max_ticks - 3)
